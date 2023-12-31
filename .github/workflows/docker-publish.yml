@@ -1,9 +1,4 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-name: Create and publish a Docker image
+name: Create and publish Docker images
 
 on:
   push:
@@ -14,6 +9,7 @@ on:
     # postgis/postgis update schedule is '15 5 * * 1'
     # https://github.com/postgis/docker-postgis/blob/master/.github/workflows/main.yml
     - cron: '15 7 * * 1'
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -59,11 +55,12 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          load: true
+          push: true
           no-cache: true
           pull: true
           tags: ${{ env.TEST_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
           build-args: |
             BASE_IMAGE_TAG=${{ env.BASE_IMAGE_TAG }}
 
