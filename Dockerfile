@@ -110,6 +110,13 @@ RUN apt-get install -y --no-install-recommends libsqlite3-dev && \
 	make USE_PGXS=1 install
 
 
+FROM common-deps as build-AGE
+WORKDIR /tmp/age
+RUN apt-get install -y --no-install-recommends  build-essential libreadline-dev zlib1g-dev flex bison && \
+	ASSET_NAME=$(basename $(curl -LIs -o /dev/null -w %{url_effective} https://github.com/apache/age/releases/latest)) && \
+    	curl --fail -L "https://github.com/apache/age/archive/PG16%2F${ASSET_NAME}.tar.gz" | tar -zx --strip-components=1 -C . && \
+        make && \
+    	make install
 
 
 FROM common-deps as build-oracle_fdw
@@ -268,6 +275,13 @@ COPY --from=build-sqlite_fdw \
 COPY --from=build-sqlite_fdw \
 	/usr/lib/postgresql/$PG_MAJOR/lib/sqlite_fdw.so \
 	/usr/lib/postgresql/$PG_MAJOR/lib/sqlite_fdw.so
+
+COPY --from=build-AGE \
+    /usr/share/postgresql/$PG_MAJOR/extension/age* \
+    /usr/share/postgresql/$PG_MAJOR/extension/
+COPY --from=build-AGE \
+    /usr/lib/postgresql/$PG_MAJOR/lib/age.so \
+    /usr/lib/postgresql/$PG_MAJOR/lib/
 
 COPY --from=build-oracle_fdw \
 	/usr/share/postgresql/$PG_MAJOR/extension/oracle_fdw* \
