@@ -219,7 +219,6 @@ RUN apt-get update && \
 		postgresql-plperl-$PG_MAJOR \
 		postgresql-plpython3-$PG_MAJOR \
 	# extensions below are all here for PoWA
-		postgresql-$PG_MAJOR-hypopg \
 		postgresql-$PG_MAJOR-pg-qualstats \
 		postgresql-$PG_MAJOR-pg-stat-kcache \
 		postgresql-$PG_MAJOR-pg-track-settings \
