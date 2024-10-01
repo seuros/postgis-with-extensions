@@ -30,6 +30,7 @@ jobs:
       matrix:
         postgres: [16]
         postgis: ['3.4']
+        platform: [linux/amd64, linux/arm64]
 
     env:
       BASE_IMAGE_TAG: ${{ matrix.postgres }}-${{ matrix.postgis }}
@@ -57,16 +58,44 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
-          tags: ${{ env.BASE_IMAGE_TAG }}
+          tags: ${{ env.BASE_IMAGE_TAG }}-${{ matrix.platform }}
 
-      - name: Push to registry
-        if: ${{ github.event_name != 'pull_request' }}
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE_TAG=${{ env.BASE_IMAGE_TAG }}
+
+      - name: Verify image architecture
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          docker pull ${{ steps.meta.outputs.tags }}
+          docker inspect ${{ steps.meta.outputs.tags }} | jq '.[].Architecture'
+
+  create-manifest:
+    needs: build-and-push-image
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifest
+        run: |
+          docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }} \
+            ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/amd64 \
+            ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}
+
+      - name: Verify manifest
+        run: |
+          docker manifest inspect ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}
