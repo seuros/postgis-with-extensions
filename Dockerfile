@@ -118,45 +118,11 @@ RUN apt-get install -y --no-install-recommends  build-essential libreadline-dev 
         make && \
     	make install
 
-
-FROM common-deps as build-oracle_fdw
-
-# Latest version
-ARG ORACLE_CLIENT_URL=https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linuxx64.zip
-ARG ORACLE_SQLPLUS_URL=https://download.oracle.com/otn_software/linux/instantclient/instantclient-sqlplus-linuxx64.zip
-ARG ORACLE_SDK_URL=https://download.oracle.com/otn_software/linux/instantclient/instantclient-sdk-linuxx64.zip
-
-RUN apt-get install -y --no-install-recommends unzip && \
-	# instant client
-	curl --fail -L -o instant_client.zip ${ORACLE_CLIENT_URL} && \
-	unzip instant_client.zip && \
-	# sqlplus
-	curl --fail -L -o sqlplus.zip ${ORACLE_SQLPLUS_URL} && \
-	unzip sqlplus.zip && \
-	# sdk
-	curl --fail -L -o sdk.zip ${ORACLE_SDK_URL} && \
-	unzip sdk.zip && \
-	# install
-	mkdir -p ${ORACLE_HOME} && \
-	mv ./instantclient*/* ${ORACLE_HOME}
-
-# Install oracle_fdw
-WORKDIR /tmp/oracle_fdw
-RUN ASSET_NAME=$(basename $(curl -LIs -o /dev/null -w %{url_effective} https://github.com/laurenz/oracle_fdw/releases/latest)) && \
-	curl --fail -L "https://github.com/laurenz/oracle_fdw/archive/${ASSET_NAME}.tar.gz" | tar -zx --strip-components=1 -C . && \
-	make && \
-	make install
-
-
-
-
 FROM base-image as final-stage
 
-# libaio1 is a runtime requirement for the Oracle client that oracle_fdw uses
 # libsqlite3-mod-spatialite is a runtime requirement for using spatialite with sqlite_fdw
 RUN apt-get update && \
 	apt-get install -y --no-install-recommends \
-		libaio1 \
 		libsqlite3-mod-spatialite \
 		pgagent \
 		postgresql-$PG_MAJOR-asn1oid \
@@ -281,19 +247,5 @@ COPY --from=build-AGE \
 COPY --from=build-AGE \
     /usr/lib/postgresql/$PG_MAJOR/lib/age.so \
     /usr/lib/postgresql/$PG_MAJOR/lib/
-
-COPY --from=build-oracle_fdw \
-	/usr/share/postgresql/$PG_MAJOR/extension/oracle_fdw* \
-	/usr/share/postgresql/$PG_MAJOR/extension/
-COPY --from=build-oracle_fdw \
-	/usr/share/doc/postgresql-doc-$PG_MAJOR/extension/README.oracle_fdw \
-	/usr/share/doc/postgresql-doc-$PG_MAJOR/extension/README.oracle_fdw
-COPY --from=build-oracle_fdw \
-	/usr/lib/postgresql/$PG_MAJOR/lib/oracle_fdw.so \
-	/usr/lib/postgresql/$PG_MAJOR/lib/oracle_fdw.so
-COPY --from=build-oracle_fdw  ${ORACLE_HOME}  ${ORACLE_HOME}
-
-RUN echo ${ORACLE_HOME} > /etc/ld.so.conf.d/oracle_instantclient.conf && \
-	ldconfig
 
 COPY ./conf.sh  /docker-entrypoint-initdb.d/z_conf.sh
