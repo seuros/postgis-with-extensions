@@ -50,7 +50,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set platform tag
-        run: echo "PLATFORM_TAG=${{ matrix.platform | replace('linux/', 'linux-') }}" >> $GITHUB_ENV
+        run: |
+          PLATFORM_TAG="${{ matrix.platform }}"
+          PLATFORM_TAG="${PLATFORM_TAG/linux\//linux-}"
+          echo "PLATFORM_TAG=$PLATFORM_TAG" >> $GITHUB_ENV
 
       - name: Build and push Docker image
         id: build
@@ -90,16 +93,16 @@ jobs:
         run: |
           # Create the manifest for both platforms under the 16-3.4 tag
           docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }} \
-            --amend ${{ needs.build-and-push-image.outputs.digest_amd64 }} \
-            --amend ${{ needs.build-and-push-image.outputs.digest_arm64 }}
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-amd64 \
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-arm64
 
           # Push the version tag ${{ env.BASE_IMAGE_TAG }}
           docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}
 
           # Create and push the manifest under the 'latest' tag
           docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:latest \
-            --amend ${{ needs.build-and-push-image.outputs.digest_amd64 }} \
-            --amend ${{ needs.build-and-push-image.outputs.digest_arm64 }}
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-amd64 \
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-arm64
 
           # Push the 'latest' tag
           docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:latest
