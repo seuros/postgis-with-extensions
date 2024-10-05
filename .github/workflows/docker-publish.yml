@@ -14,7 +14,7 @@ on:
 env:
   REGISTRY: ghcr.io
   TEST_TAG: ${{ github.repository }}:test
-  COMPOSE_FILE: ./docker-compose.test.yml
+  COMPOSE_FILE: ./docker-compose.yml
   LATEST_TAG: 16-3.4
 
 jobs:
@@ -91,9 +91,7 @@ jobs:
 
       - name: Create and push manifest
         run: |
-          docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }} \
-            ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/amd64 \
-            ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/arm64
+          docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}
           docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}
 
       - name: Verify manifest

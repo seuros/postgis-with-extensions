@@ -1,4 +1,4 @@
-# Start from Ubuntu 22.04 as the base image
+# Start from Ubuntu 24.04 as the base image
 FROM ubuntu:24.04
 
 # Avoid prompts from apt
@@ -26,22 +26,27 @@ RUN apt-get update && apt-get install -y \
     flex \
     bison \
     libreadline-dev \
+    net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
 ENV PG_MAJOR=16
 ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
+ENV POSTGRES_PORT=5432
 
 # Build and install Apache AGE
-RUN git clone https://github.com/apache/age.git \
-    && cd age \
-    && git checkout PG16 \
+WORKDIR /tmp/age
+RUN ASSET_NAME=$(basename $(curl -LIs -o /dev/null -w %{url_effective} https://github.com/apache/age/releases/latest)) \
+    && curl --fail -L "https://github.com/apache/age/archive/PG16%2F${ASSET_NAME}.tar.gz" | tar -zx --strip-components=1 -C . \
     && make \
     && make install \
-    && cd .. \
-    && rm -rf age
+    && cd / \
+    && rm -rf /tmp/age
 
-
+# Modify PostgreSQL configuration to listen on all IP addresses and set port
+RUN sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '0.0.0.0'/" /etc/postgresql/$PG_MAJOR/main/postgresql.conf \
+    && sed -i "s/#port = 5432/port = ${POSTGRES_PORT}/" /etc/postgresql/$PG_MAJOR/main/postgresql.conf \
+    && echo "host all all 0.0.0.0/0 md5" >> /etc/postgresql/$PG_MAJOR/main/pg_hba.conf
 
 # Create a directory for custom initialization scripts
 RUN mkdir -p /docker-entrypoint-initdb.d
@@ -50,8 +55,12 @@ RUN mkdir -p /docker-entrypoint-initdb.d
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+WORKDIR /app/
+
 # Switch to the postgres user
 USER postgres
 
-EXPOSE 5432
+EXPOSE ${POSTGRES_PORT}
+
+# Start PostgreSQL using the modified configuration
 CMD ["docker-entrypoint.sh"]

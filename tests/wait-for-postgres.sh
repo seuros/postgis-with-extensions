@@ -7,7 +7,7 @@ uri="$2"
 cmd="$@"
 
 >&2 echo "Sleeping 20 seconds to skip initial server restarts"
-sleep 20
+sleep 10
 
 until psql "$uri" -c '\q'; do
 	>&2 echo "Postgres is unavailable - sleeping"
