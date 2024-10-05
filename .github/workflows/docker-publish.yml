@@ -7,7 +7,6 @@ on:
     branches: ['master']
   schedule:
     # postgis/postgis update schedule is '15 5 * * 1'
-    # https://github.com/postgis/docker-postgis/blob/master/.github/workflows/main.yml
     - cron: '15 7 * * 1'
   workflow_dispatch:
 
@@ -88,16 +87,16 @@ jobs:
         run: |
           # Create the manifest for both platforms under the 16-3.4 tag
           docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }} \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/amd64 \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/arm64
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-amd64 \
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-arm64
 
           # Push the version tag ${{ env.BASE_IMAGE_TAG }}
           docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}
 
           # Create and push the manifest under the 'latest' tag
           docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:latest \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/amd64 \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux/arm64
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-amd64 \
+            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-arm64
 
           # Push the 'latest' tag
           docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:latest
