@@ -49,13 +49,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set platform tag
+        run: echo "PLATFORM_TAG=${{ matrix.platform | replace('linux/', 'linux-') }}" >> $GITHUB_ENV
+
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-${{ matrix.platform }}
+            ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-${{ env.PLATFORM_TAG }}
           platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE_TAG=${{ env.BASE_IMAGE_TAG }}
