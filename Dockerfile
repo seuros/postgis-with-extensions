@@ -4,7 +4,7 @@ FROM debian:bookworm-slim AS builder
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install necessary build tools and dependencies
+# Install necessary build tools and PostgreSQL repository
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg2 \
@@ -18,7 +18,12 @@ RUN apt-get update && apt-get install -y \
     flex \
     bison \
     libreadline-dev \
-    postgresql-server-dev-16
+    && curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null \
+    && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y \
+    postgresql-server-dev-16 \
+    postgresql-16 \
+    && rm -rf /var/lib/apt/lists/*  # Cleanup APT cache
 
 # Set environment variables
 ENV PG_MAJOR=16
@@ -30,7 +35,7 @@ RUN ASSET_NAME=$(basename $(curl -LIs -o /dev/null -w %{url_effective} https://g
     && make \
     && make install \
     && cd / \
-    && rm -rf /tmp/age
+    && rm -rf /tmp/age  # Remove build directory after installation
 
 # Stage 2: Runtime with PostgreSQL and installed extensions
 FROM debian:bookworm-slim
@@ -38,22 +43,28 @@ FROM debian:bookworm-slim
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime dependencies (without build tools)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install PostgreSQL repository
+RUN apt-get update && apt-get install -y curl gnupg2 lsb-release \
+    && curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null \
+    && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update
+
+# Install PostgreSQL 16 and necessary extensions without build tools
+RUN apt-get install -y --no-install-recommends \
     postgresql-16 \
     postgresql-16-postgis-3 \
     postgresql-16-postgis-3-scripts \
     postgresql-16-pgvector \
     net-tools \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*  # Cleanup APT cache
 
 # Set environment variables
 ENV PG_MAJOR=16
 ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
 ENV POSTGRES_PORT=5432
 
-# Copy the built AGE files from the builder stage
+# Copy the built Apache AGE files from the builder stage
 COPY --from=builder /usr/lib/postgresql/ /usr/lib/postgresql/
 COPY --from=builder /usr/share/postgresql/ /usr/share/postgresql/
 
