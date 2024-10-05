@@ -1,24 +1,16 @@
-# Start from Ubuntu 24.04 as the base image
-FROM ubuntu:24.04
+# Stage 1: Build Apache AGE and other dependencies
+FROM debian:bookworm-slim AS builder
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install PostgreSQL repository and key
-RUN apt-get update && apt-get install -y curl gnupg2 lsb-release \
-    && curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null \
-    && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list
-
-# Install PostgreSQL 16, PostGIS, pgvector, and build dependencies
+# Install necessary build tools and dependencies
 RUN apt-get update && apt-get install -y \
-    postgresql-16 \
-    postgresql-server-dev-16 \
-    postgresql-16-postgis-3 \
-    postgresql-16-postgis-3-scripts \
-    postgresql-16-pgvector \
+    curl \
+    gnupg2 \
+    lsb-release \
     build-essential \
     git \
-    curl \
     cmake \
     libssl-dev \
     liblz4-dev \
@@ -26,13 +18,10 @@ RUN apt-get update && apt-get install -y \
     flex \
     bison \
     libreadline-dev \
-    net-tools \
-    && rm -rf /var/lib/apt/lists/*
+    postgresql-server-dev-16
 
 # Set environment variables
 ENV PG_MAJOR=16
-ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
-ENV POSTGRES_PORT=5432
 
 # Build and install Apache AGE
 WORKDIR /tmp/age
@@ -42,6 +31,31 @@ RUN ASSET_NAME=$(basename $(curl -LIs -o /dev/null -w %{url_effective} https://g
     && make install \
     && cd / \
     && rm -rf /tmp/age
+
+# Stage 2: Runtime with PostgreSQL and installed extensions
+FROM debian:bookworm-slim
+
+# Avoid prompts from apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies (without build tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-16 \
+    postgresql-16-postgis-3 \
+    postgresql-16-postgis-3-scripts \
+    postgresql-16-pgvector \
+    net-tools \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment variables
+ENV PG_MAJOR=16
+ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
+ENV POSTGRES_PORT=5432
+
+# Copy the built AGE files from the builder stage
+COPY --from=builder /usr/lib/postgresql/ /usr/lib/postgresql/
+COPY --from=builder /usr/share/postgresql/ /usr/share/postgresql/
 
 # Modify PostgreSQL configuration to listen on all IP addresses and set port
 RUN sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '0.0.0.0'/" /etc/postgresql/$PG_MAJOR/main/postgresql.conf \
