@@ -12,8 +12,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  TEST_TAG: ${{ github.repository }}:test
-  COMPOSE_FILE: ./docker-compose.yml
   BASE_IMAGE_TAG: 16-3.4
 
 jobs:
@@ -28,6 +26,10 @@ jobs:
       fail-fast: false
       matrix:
         platform: [linux/amd64, linux/arm64]
+
+    outputs:
+      digest_amd64: ${{ steps.get_digest_amd64.outputs.digest }}
+      digest_arm64: ${{ steps.get_digest_arm64.outputs.digest }}
 
     steps:
       - name: Checkout repository
@@ -47,36 +49,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}
-          tags: ${{ env.BASE_IMAGE_TAG }}-${{ matrix.platform }}
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-${{ matrix.platform }}
           platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE_TAG=${{ env.BASE_IMAGE_TAG }}
 
-      - name: Verify image architecture
-        if: ${{ github.event_name != 'pull_request' }}
-        run: |
-          docker pull --platform ${{ matrix.platform }} ${{ steps.meta.outputs.tags }}
-          docker inspect --format='{{.Architecture}}' ${{ steps.meta.outputs.tags }}
+      - name: Get digest for amd64
+        if: matrix.platform == 'linux/amd64'
+        id: get_digest_amd64
+        run: echo "digest=${{ steps.build.outputs.digest }}" >> $GITHUB_OUTPUT
+
+      - name: Get digest for arm64
+        if: matrix.platform == 'linux/arm64'
+        id: get_digest_arm64
+        run: echo "digest=${{ steps.build.outputs.digest }}" >> $GITHUB_OUTPUT
 
   create-manifest:
     needs: build-and-push-image
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'pull_request' }}
     steps:
-      - name: Login to GitHub Container Registry
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -87,16 +86,16 @@ jobs:
         run: |
           # Create the manifest for both platforms under the 16-3.4 tag
           docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }} \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-amd64 \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-arm64
+            --amend ${{ needs.build-and-push-image.outputs.digest_amd64 }} \
+            --amend ${{ needs.build-and-push-image.outputs.digest_arm64 }}
 
           # Push the version tag ${{ env.BASE_IMAGE_TAG }}
           docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}
 
           # Create and push the manifest under the 'latest' tag
           docker manifest create ${{ env.REGISTRY }}/${{ github.repository }}:latest \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-amd64 \
-            --amend ${{ env.REGISTRY }}/${{ github.repository }}:${{ env.BASE_IMAGE_TAG }}-linux-arm64
+            --amend ${{ needs.build-and-push-image.outputs.digest_amd64 }} \
+            --amend ${{ needs.build-and-push-image.outputs.digest_arm64 }}
 
           # Push the 'latest' tag
           docker manifest push ${{ env.REGISTRY }}/${{ github.repository }}:latest
