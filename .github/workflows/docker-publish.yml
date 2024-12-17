@@ -12,7 +12,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  BASE_IMAGE_TAG: 16-3.4
+  BASE_IMAGE_TAG: 17-2
 
 jobs:
   build-and-push-image:

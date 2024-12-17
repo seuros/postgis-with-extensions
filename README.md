@@ -1,6 +1,6 @@
 #### PostgreSQL with postgis, pgvector and age
 
-The `latest` tag currently corresponds to `16-3.4`.
+The `latest` tag currently corresponds to `17.2`.
 
 ## Usage
 
