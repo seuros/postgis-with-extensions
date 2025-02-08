@@ -54,19 +54,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install PostgreSQL repository
 RUN apt-get update && apt-get install -y curl gnupg2 lsb-release \
-   && curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null \
-   && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
-   && apt-get update
+&& curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null \
+&& echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+&& apt-get update
 
 # Install PostgreSQL and necessary extensions without build tools
 RUN apt-get install -y --no-install-recommends \
-   "postgresql-${PG_MAJOR}" \
-   "postgresql-${PG_MAJOR}-postgis-3" \
-   "postgresql-${PG_MAJOR}-postgis-3-scripts" \
-   "postgresql-${PG_MAJOR}-pgvector" \
-   net-tools \
-   curl \
-   && rm -rf /var/lib/apt/lists/*  # Cleanup APT cache
+"postgresql-${PG_MAJOR}" \
+postgresql-$PG_MAJOR-age \
+"postgresql-${PG_MAJOR}-postgis-3" \
+"postgresql-${PG_MAJOR}-postgis-3-scripts" \
+"postgresql-${PG_MAJOR}-pgvector" \
+net-tools \
+curl \
+&& rm -rf /var/lib/apt/lists/*  # Cleanup APT cache
 
 # Set environment variables for PostgreSQL
 ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
@@ -78,8 +79,8 @@ COPY --from=builder /usr/share/postgresql/ /usr/share/postgresql/
 
 # Modify PostgreSQL configuration to listen on all IP addresses and set port
 RUN sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '0.0.0.0'/" /etc/postgresql/$PG_MAJOR/main/postgresql.conf \
-   && sed -i "s/#port = 5432/port = ${POSTGRES_PORT}/" /etc/postgresql/$PG_MAJOR/main/postgresql.conf \
-   && echo "host all all 0.0.0.0/0 md5" >> /etc/postgresql/$PG_MAJOR/main/pg_hba.conf
+&& sed -i "s/#port = 5432/port = ${POSTGRES_PORT}/" /etc/postgresql/$PG_MAJOR/main/postgresql.conf \
+&& echo "host all all 0.0.0.0/0 md5" >> /etc/postgresql/$PG_MAJOR/main/pg_hba.conf
 
 # Create a directory for custom initialization scripts
 RUN mkdir -p /docker-entrypoint-initdb.d

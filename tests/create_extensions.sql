@@ -8,7 +8,7 @@ CREATE DATABASE test;
 \c test
 
 
-SELECT * FROM pg_available_extensions;
+SELECT * FROM pg_available_extensions order by name;
 
 -- Enable the PostGIS extension
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -110,5 +110,10 @@ DO $$
 		END IF;
 END$$;
 
+-- Print the current version of PostgreSQL
+SELECT version();
+-- Print version of vector, postgis, and age extensions
+SELECT extname, extversion
+FROM pg_extension;
 \c postgres
 DROP DATABASE test;
