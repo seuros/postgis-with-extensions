@@ -1,29 +1,31 @@
 services:
   postgres:
     build: .
+    container_name: postgres
     environment:
-      - POSTGRES_PASSWORD=postgres
-      - TZ=UTC
-    restart: unless-stopped
-    networks:
-      - pgtest_network
+      POSTGRES_USER: ibn_trippin
+      POSTGRES_PASSWORD: camelvisions420
+      POSTGRES_DB: sufi_geo_delirium
+      POSTGRES_HOST_AUTH_METHOD: md5 # (default, explicit for clarity)
+      TZ: UTC
     ports:
       - "5432:5432"
+    networks: [ pgtest_network ]
 
   sut:
+    # System‑Under‑Test container
     build: ./tests
+    container_name: sut
     command:
       - "/tests/wait-for-postgres.sh"
       - "psql"
-      - "postgresql://postgres:postgres@postgres:5432/postgres"
+      - "postgresql://ibn_trippin:camelvisions420@postgres:5432/sufi_geo_delirium"
       - "-a"
       - "-f"
       - "/tests/create_extensions.sql"
-    restart: 'no'
-    depends_on:
-      - postgres
-    networks:
-      - pgtest_network
+    depends_on: [ postgres ]
+    restart: "no"
+    networks: [ pgtest_network ]
 
 networks:
   pgtest_network:

@@ -1,18 +1,23 @@
 #!/bin/sh
-# Adapted from https://docs.docker.com/compose/startup-order/
+# 🕊️ wait-for-postgres.sh — Awaiting the database like a patient mystic.
+# Adapted (then fully spiritualized) from: https://docs.docker.com/compose/startup-order/
 
 set -eu
 
 uri="$2"
 cmd="$@"
 
->&2 echo "Sleeping 20 seconds to skip initial server restarts"
+>&2 echo "🛌 Entering meditative sleep — skipping initial tantrums from Postgres..."
 sleep 10
 
-until psql "$uri" -c '\q'; do
-	>&2 echo "Postgres is unavailable - sleeping"
-	sleep 1
+attempt=0
+while ! psql "$uri" -c '\q' 2>/dev/null; do
+  attempt=$((attempt + 1))
+  >&2 echo "⏳ Postgres still rebirthing... ($attempt)"
+  sleep 1
 done
 
->&2 echo "Postgres is up - executing command"
+>&2 echo "✅ The database has awoken. Executing the final rite:"
+>&2 echo "👉 $cmd"
+
 exec $cmd

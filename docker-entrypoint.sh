@@ -1,71 +1,81 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-# Function to start PostgreSQL service
-start_postgres() {
-	echo "Starting PostgreSQL service..."
-	pg_ctlcluster $PG_MAJOR main start
-}
+# ---------------------------------------------------------------------------
+# Configuration (all are optional except POSTGRES_PASSWORD when -U = postgres)
+# ---------------------------------------------------------------------------
+: "${PG_MAJOR:?PG_MAJOR env var must be baked into the image}"
+: "${POSTGRES_USER:=postgres}"                     # default superuser
+: "${POSTGRES_DB:=$POSTGRES_USER}"                 # default database
+: "${POSTGRES_PASSWORD:=$POSTGRES_USER}"           # default password
+: "${POSTGRES_INITDB_ARGS:=}"                      # extra flags for initdb
+: "${POSTGRES_HOST_AUTH_METHOD:=md5}"              # trust / md5 / scram‑sha‑256
 
-# Function to set the postgres user password
-set_postgres_password() {
-	# Check if the POSTGRES_PASSWORD variable is set
-	if [ -z "$POSTGRES_PASSWORD" ]; then
-		echo "Error: POSTGRES_PASSWORD is not set"
-		exit 1
-	else
-		echo "Setting postgres user password..."
-		psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres <<-EOSQL
-		    ALTER USER postgres PASSWORD '${POSTGRES_PASSWORD}';
-		EOSQL
-	fi
-}
+PGDATA="/var/lib/postgresql/${PG_MAJOR}/main"
+CONF="/etc/postgresql/${PG_MAJOR}/main/postgresql.conf"
 
-# Function to create a default database if it doesn't exist
-create_default_db() {
-	echo "Checking for default database..."
-	if [ -z "$(psql -Atc "SELECT 1 FROM pg_database WHERE datname='${POSTGRES_DB:-postgres}'")" ]; then
-		echo "Creating default database '${POSTGRES_DB:-postgres}'..."
-		createdb -E UTF8 ${POSTGRES_DB:-postgres}
-	else
-		echo "Database '${POSTGRES_DB:-postgres}' already exists."
-	fi
-}
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+log() { echo "[entrypoint] $*"; }
 
-# Function to run initialization scripts
-run_init_scripts() {
-	echo "Running initialization scripts..."
-	for f in /docker-entrypoint-initdb.d/*; do
-		case "$f" in
-			*.sql)
-				echo "$0: running $f"
-				psql -d ${POSTGRES_DB:-postgres} -f "$f"
-				echo ;;
-			*.sql.gz)
-				echo "$0: running $f"
-				gunzip -c "$f" | psql -d ${POSTGRES_DB:-postgres}
-				echo ;;
-			*)
-				echo "$0: ignoring $f" ;;
-		esac
-		echo
-	done
-}
+psql_nopass() { psql --username "$POSTGRES_USER" --no-password "$@"; }
 
-# Trap to stop PostgreSQL service when script exits
-trap 'echo "Stopping PostgreSQL service..."; pg_ctlcluster $PG_MAJOR main stop' EXIT
+# ---------------------------------------------------------------------------
+# Init (first run only)
+# ---------------------------------------------------------------------------
+first_run() { [[ ! -s "${PGDATA}/PG_VERSION" ]]; }
 
-# Start PostgreSQL
-start_postgres
+if first_run; then
+  log "Empty data dir – initialising cluster 🔧"
 
-# Set postgres user password
-set_postgres_password
+  initdb -D "$PGDATA" $POSTGRES_INITDB_ARGS
 
-# Create default database
-create_default_db
+  # Start in the background just for provisioning --------------------------
+  pg_ctl -D "$PGDATA" -o "-c listen_addresses='localhost'" -w start
 
-# Run initialization scripts
-run_init_scripts
+  # postgres user -----------------------------------------------------------
+  if [[ "$POSTGRES_USER" = "postgres" ]]; then
+    [[ -n "$POSTGRES_PASSWORD" ]] || { log "ERROR: POSTGRES_PASSWORD not set"; exit 1; }
+    psql -v ON_ERROR_STOP=1 <<-SQL
+      ALTER USER postgres WITH PASSWORD '${POSTGRES_PASSWORD}';
+SQL
+  else
+    psql -v ON_ERROR_STOP=1 <<-SQL
+      CREATE USER "${POSTGRES_USER}" WITH PASSWORD '${POSTGRES_PASSWORD:-}';
+      ALTER USER "${POSTGRES_USER}" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN;
+SQL
+  fi
 
-# Keep the container running
-tail -f /dev/null
+  # database ---------------------------------------------------------------
+  if [[ "$POSTGRES_DB" != "postgres" || "$POSTGRES_USER" != "postgres" ]]; then
+    psql -v ON_ERROR_STOP=1 <<-SQL
+      CREATE DATABASE "${POSTGRES_DB}" OWNER "${POSTGRES_USER}";
+SQL
+  fi
+
+  # run any user‑supplied init scripts -------------------------------------
+  for f in /docker-entrypoint-initdb.d/*; do
+    case "$f" in
+      *.sql)    log "running $f"; psql_nopass -v ON_ERROR_STOP=1 -d "$POSTGRES_DB" -f "$f" ;;
+      *.sql.gz) log "running $f"; gunzip -c "$f" | psql_nopass -v ON_ERROR_STOP=1 -d "$POSTGRES_DB" ;;
+      *)        log "ignoring $f" ;;
+    esac
+  done
+
+  pg_ctl -D "$PGDATA" -m fast -w stop
+  log "Initialisation complete ✅"
+fi
+
+# ---------------------------------------------------------------------------
+# Adjust pg_hba.conf every run (user may mount own file)
+# ---------------------------------------------------------------------------
+HBA="/etc/postgresql/${PG_MAJOR}/main/pg_hba.conf"
+if ! grep -q "^host *all *all *0.0.0.0/0 " "$HBA"; then
+  echo "host all all 0.0.0.0/0 ${POSTGRES_HOST_AUTH_METHOD}" >>"$HBA"
+fi
+
+# ---------------------------------------------------------------------------
+# hand off to postgres (PID 1)
+# ---------------------------------------------------------------------------
+exec postgres -D "$PGDATA" -c config_file="$CONF"

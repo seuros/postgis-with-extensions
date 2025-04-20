@@ -28,7 +28,7 @@ list:
 
 # Target to run the test container
 test:
-	docker compose up
+	docker compose up --build
 
 # Help target to display available commands
 help:
