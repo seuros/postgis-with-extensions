@@ -26,6 +26,7 @@ RUN apt-get update \
 RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-postgis-3 \
     postgresql-${PG_MAJOR}-postgis-3-scripts \
+    postgresql-${PG_MAJOR}-pgrouting \
     postgresql-${PG_MAJOR}-pgvector \
     postgresql-${PG_MAJOR}-age \
     net-tools libkrb5-dev krb5-user libpam-krb5 \
