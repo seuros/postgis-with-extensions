@@ -74,12 +74,8 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_VERSION }}
             ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_MAJOR }}
             ${{ env.IMAGE_NAME }}:latest
-          cache-from: |
-            type=gha,scope=${{ github.ref_name }}-debian
-            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-debian
-          cache-to: |
-            type=gha,mode=max,scope=${{ github.ref_name }}-debian
-            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-debian,mode=max,oci-mediatypes=true,compression=zstd
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   build-alpine:
     name: Build + Push (Alpine)
@@ -115,9 +111,5 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_VERSION }}-alpine
             ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_MAJOR }}-alpine
             ${{ env.IMAGE_NAME }}:alpine
-          cache-from: |
-            type=gha,scope=${{ github.ref_name }}-alpine
-            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-alpine
-          cache-to: |
-            type=gha,mode=max,scope=${{ github.ref_name }}-alpine
-            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-alpine,mode=max,oci-mediatypes=true,compression=zstd
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
