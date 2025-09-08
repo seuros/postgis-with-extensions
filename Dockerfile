@@ -4,7 +4,8 @@
 ##############################################################################
 
 ARG PG_MAJOR=17
-FROM postgres:${PG_MAJOR}-bookworm
+ARG PG_VERSION=17.6
+FROM postgres:${PG_VERSION}-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -31,5 +32,4 @@ RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-age \
     net-tools libkrb5-dev krb5-user libpam-krb5 \
     && rm -rf /var/lib/apt/lists/*
-
 

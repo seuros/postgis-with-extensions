@@ -1,0 +1,116 @@
+name: Build and Publish Docker Images
+
+on:
+  push:
+    branches: [ master, main ]
+    tags: [ 'v*', 'release-*' ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: Prepare variables
+    runs-on: ubuntu-latest
+    outputs:
+      PG_VERSION: ${{ steps.vars.outputs.PG_VERSION }}
+      PG_MAJOR: ${{ steps.vars.outputs.PG_MAJOR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract PG version from Dockerfile
+        id: vars
+        run: |
+          PG_VERSION=$(sed -n "s/^ARG PG_VERSION=\(.*\)/\1/p" Dockerfile)
+          if [ -z "$PG_VERSION" ]; then
+            echo "Failed to find ARG PG_VERSION in Dockerfile" >&2
+            exit 1
+          fi
+          PG_MAJOR=${PG_VERSION%%.*}
+          echo "PG_VERSION=$PG_VERSION" | tee -a $GITHUB_OUTPUT
+          echo "PG_MAJOR=$PG_MAJOR" | tee -a $GITHUB_OUTPUT
+
+  build-debian:
+    name: Build + Push (Debian)
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (Debian)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            PG_VERSION=${{ needs.prepare.outputs.PG_VERSION }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_VERSION }}
+            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_MAJOR }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-alpine:
+    name: Build + Push (Alpine)
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (Alpine-from-source)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.alpine
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            PG_VERSION=${{ needs.prepare.outputs.PG_VERSION }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_VERSION }}-alpine
+            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_MAJOR }}-alpine
+            ${{ env.IMAGE_NAME }}:alpine
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
