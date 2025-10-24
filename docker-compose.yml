@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: ${IMAGE_NAME:-ghcr.io/seuros/postgis-with-extensions}:${IMAGE_TAG:-17}${IMAGE_FLAVOR:-}
+    image: ${IMAGE_NAME:-ghcr.io/seuros/postgis-with-extensions}:${IMAGE_TAG:-18}${IMAGE_FLAVOR:-}
     container_name: postgres
     environment:
       POSTGRES_USER: ibn_trippin

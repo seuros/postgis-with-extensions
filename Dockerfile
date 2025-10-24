@@ -3,8 +3,8 @@
 # – based on the official Postgres image so the cluster is created at runtime.
 ##############################################################################
 
-ARG PG_MAJOR=17
-ARG PG_VERSION=17.6
+ARG PG_MAJOR=18
+ARG PG_VERSION=18.0
 FROM postgres:${PG_VERSION}-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
