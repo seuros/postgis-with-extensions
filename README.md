@@ -1,6 +1,6 @@
 #### PostgreSQL with postgis, pgvector and age
 
-The `latest` tag currently corresponds to `17.6`.
+The `latest` tag currently corresponds to `18.0`.
 
 ## Usage
 
@@ -10,27 +10,27 @@ Run a basic container with extensions available. Choose a tag strategy:
 # Moving latest (always the newest build)
 docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:latest
 
-# Track major 17 (gets 17.x updates)
-docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:17
+# Track major 18 (gets 18.x updates)
+docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:18
 
 # Pin exact version for reproducible builds
-docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:17.6
+docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:18.0
 ```
 
 Compose example (uses image tags instead of local build):
 
 ```bash
-# default: :17
-IMAGE_TAG=17 docker compose up -d
+# default: :18
+IMAGE_TAG=18 docker compose up -d
 
 # latest
 IMAGE_TAG=latest docker compose up -d
 
 # exact patch
-IMAGE_TAG=17.6 docker compose up -d
+IMAGE_TAG=18.0 docker compose up -d
 
 # Alpine variant
-IMAGE_TAG=17 IMAGE_FLAVOR=-alpine docker compose up -d
+IMAGE_TAG=18 IMAGE_FLAVOR=-alpine docker compose up -d
 ```
 
 ## Available extensions
@@ -42,7 +42,7 @@ IMAGE_TAG=17 IMAGE_FLAVOR=-alpine docker compose up -d
 
 ## Alpine variant
 
-- Tags: `:alpine`, `:17-alpine`, `:17.6-alpine`.
+- Tags: `:alpine`, `:18-alpine`, `:18.0-alpine`.
 - Includes: PostGIS (built from source), pgvector, AGE, pgRouting (built from source).
 - To disable pgRouting build (faster/smaller), pass `--build-arg WITH_PGROUTING=0`.
 
@@ -50,10 +50,10 @@ Build/push locally with the provided Makefile:
 
 ```bash
 # Debian-based
-make build         # -> :17.6, :17, :latest
+make build         # -> :18.0, :18, :latest
 
 # Alpine-based
-make build-alpine  # -> :17.6-alpine, :17-alpine, :alpine
+make build-alpine  # -> :18.0-alpine, :18-alpine, :alpine
 
 # Push
 make push push-alpine

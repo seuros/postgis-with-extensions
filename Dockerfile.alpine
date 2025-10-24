@@ -1,5 +1,5 @@
 ##############################################################################
-# Postgres 17 (Alpine) + PostGIS + pgvector + Apache AGE
+# Postgres 18 (Alpine) + PostGIS + pgvector + Apache AGE
 # – based on the official Postgres Alpine variant (compiled from source).
 #
 # Notes:
@@ -8,8 +8,8 @@
 # - pgRouting is omitted by default (heavy toolchain); can be enabled via arg.
 ##############################################################################
 
-ARG PG_MAJOR=17
-ARG PG_VERSION=17.6
+ARG PG_MAJOR=18
+ARG PG_VERSION=18.0
 FROM postgres:${PG_VERSION}-alpine
 
 ENV LANG=en_US.utf8 \
