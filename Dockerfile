@@ -1,6 +1,7 @@
 ##############################################################################
-# Postgres 18 + PostGIS 3 + pgvector + Apache AGE + pgrouting
+# Postgres 18 + PostGIS 3 + pgvector + pgrouting
 # – based on the official Postgres image so the cluster is created at runtime.
+# Note: Apache AGE not compatible with PG 18 yet
 ##############################################################################
 
 ARG PG_MAJOR=18
@@ -23,6 +24,7 @@ RUN apt-get update \
 
 # ---------------------------------------------------------------------------
 # Extensions + optional Kerberos libraries
+# Note: Apache AGE not yet compatible with PG 18
 # ---------------------------------------------------------------------------
 RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-postgis-3 \
@@ -30,25 +32,5 @@ RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-pgrouting \
     postgresql-${PG_MAJOR}-pgvector \
     net-tools libkrb5-dev krb5-user libpam-krb5 \
-    # Build dependencies for AGE (source build)
-    build-essential git \
-    postgresql-server-dev-${PG_MAJOR} \
     && rm -rf /var/lib/apt/lists/*
-
-# ---------------------------------------------------------------------------
-# Build Apache AGE from source (package not available for PG 18 yet)
-# ---------------------------------------------------------------------------
-ARG AGE_REF=PG18
-RUN set -eux; \
-    mkdir -p /tmp/build && cd /tmp/build && \
-    git clone --depth 1 --branch ${AGE_REF} https://github.com/apache/age.git && \
-    cd age && make -j "$(nproc)" PG_CONFIG=/usr/bin/pg_config && \
-    make install && \
-    test -f "$(pg_config --sharedir)/extension/age.control" && \
-    test -f "$(pg_config --pkglibdir)/age.so" && \
-    cd / && rm -rf /tmp/build && \
-    # Clean up build dependencies
-    apt-get purge -y build-essential git postgresql-server-dev-${PG_MAJOR} && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
 

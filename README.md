@@ -1,4 +1,4 @@
-#### PostgreSQL with postgis, pgvector and age
+#### PostgreSQL 18 with postgis, pgvector and pgrouting
 
 The `latest` tag currently corresponds to `18.0`.
 
@@ -37,13 +37,14 @@ IMAGE_TAG=18 IMAGE_FLAVOR=-alpine docker compose up -d
 
 - [postgis](https://github.com/postgis/postgis) - Spatial and geographic objects for PostgreSQL
 - [pgvector](https://github.com/pgvector/pgvector) - Open-source vector similarity search for PostgreSQL
-- [age](https://github.com/apache/age) - Graph database extension for PostgreSQL
 - [pgrouting](https://github.com/pgRouting/pgrouting) - Provides geospatial routing functionality
+
+**Note:** Apache AGE is not yet compatible with PostgreSQL 18.
 
 ## Alpine variant
 
 - Tags: `:alpine`, `:18-alpine`, `:18.0-alpine`.
-- Includes: PostGIS (built from source), pgvector, AGE, pgRouting (built from source).
+- Includes: PostGIS (built from source), pgvector, pgRouting (built from source).
 - To disable pgRouting build (faster/smaller), pass `--build-arg WITH_PGROUTING=0`.
 
 Build/push locally with the provided Makefile:
@@ -66,7 +67,6 @@ Once your PostgreSQL container is running, connect to it and enable the extensio
 ```sql
 CREATE EXTENSION postgis;
 CREATE EXTENSION pgvector;
-CREATE EXTENSION age;
 CREATE EXTENSION pgrouting;
 ```
 

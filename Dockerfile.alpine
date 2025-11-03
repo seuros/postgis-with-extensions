@@ -1,11 +1,12 @@
 ##############################################################################
-# Postgres 18 (Alpine) + PostGIS + pgvector + Apache AGE
+# Postgres 18 (Alpine) + PostGIS + pgvector + pgrouting
 # – based on the official Postgres Alpine variant (compiled from source).
 #
 # Notes:
 # - PostGIS is built from source to match the Postgres in this image.
-# - pgvector and AGE are built from source via PGXS.
+# - pgvector is built from source via PGXS.
 # - pgRouting is omitted by default (heavy toolchain); can be enabled via arg.
+# - Apache AGE not yet compatible with PG 18
 ##############################################################################
 
 ARG PG_MAJOR=18
@@ -18,7 +19,6 @@ ENV LANG=en_US.utf8 \
 # Build args for extension versions
 ARG POSTGIS_VERSION=3.4.2
 ARG PGVECTOR_REF=v0.7.4
-ARG AGE_REF=PG17
 ARG PGROUTING_REF=v3.7.3
 ARG WITH_PGROUTING=1
 
@@ -77,16 +77,6 @@ RUN set -eux; \
     && make install \
     && test -f "$(pg_config --sharedir)/extension/vector.control" \
     && test -f "$(pg_config --pkglibdir)/vector.so" \
-    && cd / && rm -rf /tmp/build
-
-# ----- build Apache AGE -----
-RUN set -eux; \
-    mkdir -p /tmp/build && cd /tmp/build && \
-    git clone --depth 1 --branch ${AGE_REF} https://github.com/apache/age.git && \
-    cd age && make -j "$(nproc)" PG_CONFIG=/usr/local/bin/pg_config \
-    && make install \
-    && test -f "$(pg_config --sharedir)/extension/age.control" \
-    && test -f "$(pg_config --pkglibdir)/age.so" \
     && cd / && rm -rf /tmp/build
 
 # ----- pgRouting (heavy), enabled by default to satisfy tests -----
