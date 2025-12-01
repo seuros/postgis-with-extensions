@@ -13,8 +13,12 @@ ARG PG_MAJOR=18
 ARG PG_VERSION=18.0
 FROM postgres:${PG_VERSION}-alpine
 
+# Default libpq user so client tools (psql, pg_isready) don't fall back to
+# the runtime OS user (root in many CI environments), which avoids noisy
+# "role \"root\" does not exist" connection attempts. Users can override.
 ENV LANG=en_US.utf8 \
-    TZ=UTC
+    TZ=UTC \
+    PGUSER=postgres
 
 # Build args for extension versions
 ARG POSTGIS_VERSION=3.6.0

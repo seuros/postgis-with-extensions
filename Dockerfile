@@ -8,7 +8,11 @@ ARG PG_MAJOR=18
 ARG PG_VERSION=18.0
 FROM postgres:${PG_VERSION}-bookworm
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Default libpq user so client tools (psql, pg_isready) don't fall back to
+# the runtime OS user (root in many CI environments), which avoids noisy
+# "role \"root\" does not exist" connection attempts. Users can override.
+ENV DEBIAN_FRONTEND=noninteractive \
+    PGUSER=postgres
 
 # ---------------------------------------------------------------------------
 # Add PGDG repo key (needed because we're installing extra PG packages)
@@ -33,4 +37,3 @@ RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-pgvector \
     net-tools libkrb5-dev krb5-user libpam-krb5 \
     && rm -rf /var/lib/apt/lists/*
-
