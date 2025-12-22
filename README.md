@@ -1,6 +1,6 @@
 #### PostgreSQL 18 with postgis, pgvector and pgrouting
 
-The `latest` tag currently corresponds to `18.0`.
+The `latest` tag currently corresponds to `18.1`.
 
 ## Usage
 
@@ -14,7 +14,7 @@ docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-
 docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:18
 
 # Pin exact version for reproducible builds
-docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:18.0
+docker run -e POSTGRES_PASSWORD=mysecretpassword -d ghcr.io/seuros/postgis-with-extensions:18.1
 ```
 
 Compose example (uses image tags instead of local build):
@@ -27,7 +27,7 @@ IMAGE_TAG=18 docker compose up -d
 IMAGE_TAG=latest docker compose up -d
 
 # exact patch
-IMAGE_TAG=18.0 docker compose up -d
+IMAGE_TAG=18.1 docker compose up -d
 
 # Alpine variant
 IMAGE_TAG=18 IMAGE_FLAVOR=-alpine docker compose up -d
@@ -43,7 +43,7 @@ IMAGE_TAG=18 IMAGE_FLAVOR=-alpine docker compose up -d
 
 ## Alpine variant
 
-- Tags: `:alpine`, `:18-alpine`, `:18.0-alpine`.
+- Tags: `:alpine`, `:18-alpine`, `:18.1-alpine`.
 - Includes: PostGIS (built from source), pgvector, pgRouting (built from source).
 - To disable pgRouting build (faster/smaller), pass `--build-arg WITH_PGROUTING=0`.
 
@@ -51,10 +51,10 @@ Build/push locally with the provided Makefile:
 
 ```bash
 # Debian-based
-make build         # -> :18.0, :18, :latest
+make build         # -> :18.1, :18, :latest
 
 # Alpine-based
-make build-alpine  # -> :18.0-alpine, :18-alpine, :alpine
+make build-alpine  # -> :18.1-alpine, :18-alpine, :alpine
 
 # Push
 make push push-alpine

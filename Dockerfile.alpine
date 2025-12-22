@@ -10,7 +10,7 @@
 ##############################################################################
 
 ARG PG_MAJOR=18
-ARG PG_VERSION=18.0
+ARG PG_VERSION=18.1
 FROM postgres:${PG_VERSION}-alpine
 
 # Default libpq user so client tools (psql, pg_isready) don't fall back to
@@ -103,4 +103,4 @@ RUN set -eux; \
 # cleanup build deps
 RUN apk del --no-network .build-deps
 
-# The default entrypoint/cmd from upstream image is kept.
+USER postgres

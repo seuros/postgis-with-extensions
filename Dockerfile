@@ -5,7 +5,7 @@
 ##############################################################################
 
 ARG PG_MAJOR=18
-ARG PG_VERSION=18.0
+ARG PG_VERSION=18.1
 FROM postgres:${PG_VERSION}-bookworm
 
 # Default libpq user so client tools (psql, pg_isready) don't fall back to
@@ -37,3 +37,5 @@ RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-pgvector \
     net-tools libkrb5-dev krb5-user libpam-krb5 \
     && rm -rf /var/lib/apt/lists/*
+
+USER postgres
