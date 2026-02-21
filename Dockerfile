@@ -37,7 +37,8 @@ RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-pgvector \
     postgresql-${PG_MAJOR}-cron \
     net-tools libkrb5-dev krb5-user libpam-krb5 \
-    && echo "shared_preload_libraries = 'pg_cron'" >> /usr/local/share/postgresql/postgresql.conf.sample \
     && rm -rf /var/lib/apt/lists/*
 
 USER postgres
+
+CMD ["postgres", "-c", "shared_preload_libraries=pg_cron"]

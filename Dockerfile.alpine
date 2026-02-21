@@ -115,7 +115,6 @@ RUN set -eux; \
 # cleanup build deps
 RUN apk del --no-network .build-deps
 
-# pg_cron must be preloaded before CREATE EXTENSION pg_cron can succeed
-RUN echo "shared_preload_libraries = 'pg_cron'" >> /usr/local/share/postgresql/postgresql.conf.sample
-
 USER postgres
+
+CMD ["postgres", "-c", "shared_preload_libraries=pg_cron"]
