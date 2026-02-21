@@ -1,16 +1,17 @@
 ##############################################################################
-# Postgres 18 (Alpine) + PostGIS + pgvector + pgrouting
+# Postgres 18 (Alpine) + PostGIS + pgvector + pgrouting + pg_cron
 # – based on the official Postgres Alpine variant (compiled from source).
 #
 # Notes:
 # - PostGIS is built from source to match the Postgres in this image.
 # - pgvector is built from source via PGXS.
 # - pgRouting is omitted by default (heavy toolchain); can be enabled via arg.
+# - pg_cron is built from source via PGXS.
 # - Apache AGE not yet compatible with PG 18
 ##############################################################################
 
 ARG PG_MAJOR=18
-ARG PG_VERSION=18.1
+ARG PG_VERSION=18.2
 FROM postgres:${PG_VERSION}-alpine
 
 # Default libpq user so client tools (psql, pg_isready) don't fall back to
@@ -24,6 +25,7 @@ ENV LANG=en_US.utf8 \
 ARG POSTGIS_VERSION=3.6.0
 ARG PGVECTOR_REF=v0.8.1
 ARG PGROUTING_REF=v3.7.3
+ARG PGCRON_REF=main
 ARG WITH_PGROUTING=1
 
 # Base tools + runtime deps for PostGIS
@@ -83,6 +85,16 @@ RUN set -eux; \
     && test -f "$(pg_config --pkglibdir)/vector.so" \
     && cd / && rm -rf /tmp/build
 
+# ----- build pg_cron -----
+RUN set -eux; \
+    mkdir -p /tmp/build && cd /tmp/build && \
+    git clone --depth 1 --branch ${PGCRON_REF} https://github.com/citusdata/pg_cron.git && \
+    cd pg_cron && make -j "$(nproc)" \
+    && make install \
+    && test -f "$(pg_config --sharedir)/extension/pg_cron.control" \
+    && test -f "$(pg_config --pkglibdir)/pg_cron.so" \
+    && cd / && rm -rf /tmp/build
+
 # ----- pgRouting (heavy), enabled by default to satisfy tests -----
 RUN set -eux; \
     if [ "${WITH_PGROUTING}" = "1" ]; then \
@@ -102,5 +114,8 @@ RUN set -eux; \
 
 # cleanup build deps
 RUN apk del --no-network .build-deps
+
+# pg_cron must be preloaded before CREATE EXTENSION pg_cron can succeed
+RUN echo "shared_preload_libraries = 'pg_cron'" >> /usr/local/share/postgresql/postgresql.conf.sample
 
 USER postgres

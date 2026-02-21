@@ -18,6 +18,17 @@ CREATE SCHEMA IF NOT EXISTS pgrouting;
 CREATE EXTENSION IF NOT EXISTS pgrouting SCHEMA pgrouting;
 -- actual roads, not just vibes
 
+-- Optional extension: only create if packaged in the current image
+DO
+$$
+BEGIN
+	IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_cron')
+	   AND current_database() = COALESCE(current_setting('cron.database_name', true), 'postgres') THEN
+		CREATE EXTENSION IF NOT EXISTS pg_cron;
+	END IF;
+END
+$$;
+
 -- Note: Apache AGE not yet compatible with PG 18
 -- CREATE EXTENSION IF NOT EXISTS age;
 -- LOAD 'age';
@@ -31,7 +42,7 @@ SELECT 'Running Initial Version Checks...' AS status_message;
 SELECT version() AS postgres_version;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm');
+WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron');
 SELECT pgr_version();
 
 --------------------------------------------------------------------------------
@@ -350,7 +361,7 @@ SELECT 'Running Final Version Checks...' AS status_message;
 SELECT version() AS postgres_version_final_check;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'vector', 'pgrouting', 'age');
+WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron');
 SELECT pgr_version() AS pgr_version_final_check;
 
 --------------------------------------------------------------------------------

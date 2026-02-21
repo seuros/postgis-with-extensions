@@ -1,11 +1,11 @@
 ##############################################################################
-# Postgres 18 + PostGIS 3 + pgvector + pgrouting
+# Postgres 18 + PostGIS 3 + pgvector + pgrouting + pg_cron
 # – based on the official Postgres image so the cluster is created at runtime.
 # Note: Apache AGE not compatible with PG 18 yet
 ##############################################################################
 
 ARG PG_MAJOR=18
-ARG PG_VERSION=18.1
+ARG PG_VERSION=18.2
 FROM postgres:${PG_VERSION}-bookworm
 
 # Default libpq user so client tools (psql, pg_isready) don't fall back to
@@ -35,7 +35,9 @@ RUN apt-get install -y --no-install-recommends \
     postgresql-${PG_MAJOR}-postgis-3-scripts \
     postgresql-${PG_MAJOR}-pgrouting \
     postgresql-${PG_MAJOR}-pgvector \
+    postgresql-${PG_MAJOR}-cron \
     net-tools libkrb5-dev krb5-user libpam-krb5 \
+    && echo "shared_preload_libraries = 'pg_cron'" >> /usr/local/share/postgresql/postgresql.conf.sample \
     && rm -rf /var/lib/apt/lists/*
 
 USER postgres
