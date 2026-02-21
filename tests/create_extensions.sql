@@ -13,15 +13,16 @@ CREATE DATABASE test;
 --------------------------------------------------------------------------------
 CREATE EXTENSION IF NOT EXISTS postgis; -- spatial spells
 CREATE EXTENSION IF NOT EXISTS vector; -- tiny brains in columns
+CREATE EXTENSION IF NOT EXISTS pg_trgm; -- fuzzy text matching
 CREATE SCHEMA IF NOT EXISTS pgrouting;
 CREATE EXTENSION IF NOT EXISTS pgrouting SCHEMA pgrouting;
 -- actual roads, not just vibes
 
--- Load other extensions
-CREATE EXTENSION IF NOT EXISTS age;
-LOAD 'age';
+-- Note: Apache AGE not yet compatible with PG 18
+-- CREATE EXTENSION IF NOT EXISTS age;
+-- LOAD 'age';
 
-SET search_path = public, pgrouting, ag_catalog, "$user";
+SET search_path = public, pgrouting, "$user";
 
 --------------------------------------------------------------------------------
 -- Crucial Diagnostics: Versions 🧪
@@ -30,7 +31,7 @@ SELECT 'Running Initial Version Checks...' AS status_message;
 SELECT version() AS postgres_version;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'vector', 'pgrouting', 'age');
+WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm');
 SELECT pgr_version();
 
 --------------------------------------------------------------------------------
@@ -76,26 +77,59 @@ ORDER BY embedding <-> '[1.5, 1.5, 1.5]'
 LIMIT 1;
 
 --------------------------------------------------------------------------------
--- Apache AGE: The Graph That Whispers 🌐🔮
+-- TABLE: trgm_data – Fuzzy Text Matching 🔍
 --------------------------------------------------------------------------------
-DO
-$$
-	BEGIN
-		PERFORM create_graph('social_graph');
-		PERFORM *
-		FROM cypher('social_graph',
-					$q$ CREATE (a:Person {name: 'Alice', age: 30}), (b:Person {name: 'Bob', age: 35}) $q$) AS (v agtype);
-		RAISE NOTICE 'Vertices in the graph:';
-		PERFORM * FROM cypher('social_graph', $q$ MATCH (n:Person) RETURN n $q$) AS (v agtype);
-		PERFORM *
-		FROM cypher('social_graph',
-					$q$ MATCH (a:Person), (b:Person) WHERE a.name = 'Alice' AND b.name = 'Bob' CREATE (a)-[e:KNOWS {relationship: 'Friends'}]->(b) RETURN e $q$) AS (e agtype);
-		RAISE NOTICE 'Edges in the graph:';
-		PERFORM *
-		FROM cypher('social_graph',
-					$q$ MATCH (a:Person)-[e:KNOWS]->(b:Person) RETURN a.name, b.name, e $q$) AS (a_name text, b_name text, e agtype);
-	END
-$$;
+CREATE TABLE trgm_data
+(
+	id   SERIAL PRIMARY KEY,
+	name TEXT
+);
+
+CREATE INDEX idx_trgm_name_gin ON trgm_data USING GIN (name gin_trgm_ops);
+
+INSERT INTO trgm_data (name)
+VALUES ('PostgreSQL'), ('PostGIS'), ('pgvector'), ('pgRouting'), ('pg_trgm'),
+	   ('Postgre'), ('postgres'), ('PgAdmin');
+
+-- Test similarity function and % operator
+SELECT 'pg_trgm similarity test' AS status_message;
+SELECT name, similarity(name, 'postgre') AS sim
+FROM trgm_data
+WHERE name % 'postgre'
+ORDER BY sim DESC;
+
+-- Show trigrams for a string
+SELECT 'pg_trgm trigrams display' AS status_message;
+SELECT show_trgm('PostgreSQL') AS trigrams;
+
+-- Test word_similarity
+SELECT 'pg_trgm word similarity test' AS status_message;
+SELECT name, word_similarity('post', name) AS word_sim
+FROM trgm_data
+ORDER BY word_sim DESC
+LIMIT 3;
+
+--------------------------------------------------------------------------------
+-- Apache AGE: The Graph That Whispers 🌐🔮 (Not yet compatible with PG 18)
+--------------------------------------------------------------------------------
+-- DO
+-- $$
+-- 	BEGIN
+-- 		PERFORM create_graph('social_graph');
+-- 		PERFORM *
+-- 		FROM cypher('social_graph',
+-- 					$q$ CREATE (a:Person {name: 'Alice', age: 30}), (b:Person {name: 'Bob', age: 35}) $q$) AS (v agtype);
+-- 		RAISE NOTICE 'Vertices in the graph:';
+-- 		PERFORM * FROM cypher('social_graph', $q$ MATCH (n:Person) RETURN n $q$) AS (v agtype);
+-- 		PERFORM *
+-- 		FROM cypher('social_graph',
+-- 					$q$ MATCH (a:Person), (b:Person) WHERE a.name = 'Alice' AND b.name = 'Bob' CREATE (a)-[e:KNOWS {relationship: 'Friends'}]->(b) RETURN e $q$) AS (e agtype);
+-- 		RAISE NOTICE 'Edges in the graph:';
+-- 		PERFORM *
+-- 		FROM cypher('social_graph',
+-- 					$q$ MATCH (a:Person)-[e:KNOWS]->(b:Person) RETURN a.name, b.name, e $q$) AS (a_name text, b_name text, e agtype);
+-- 	END
+-- $$;
 
 --------------------------------------------------------------------------------
 -- pgRouting: Ley Line Navigation Ritual 🗺️🔮 (Revised for Core Functionality)
@@ -137,7 +171,24 @@ ALTER TABLE ley_lines
 ALTER TABLE ley_lines
 	ADD COLUMN IF NOT EXISTS target INTEGER;
 
-SELECT pgrouting.pgr_createTopology('ley_lines', 0.00001, 'geom', 'id', 'source', 'target');
+-- pgr_createTopology was removed in pgRouting 4.0.0
+-- Use pgr_extractVertices instead
+SELECT * INTO ley_lines_vertices_pgr
+FROM pgrouting.pgr_extractVertices('SELECT id, geom FROM ley_lines ORDER BY id');
+
+-- Create spatial index on vertices
+CREATE INDEX ON ley_lines_vertices_pgr USING GIST (geom);
+ALTER TABLE ley_lines_vertices_pgr RENAME COLUMN geom TO the_geom;
+
+-- Update source/target columns using vertex IDs
+UPDATE ley_lines l SET source = v.id
+FROM ley_lines_vertices_pgr v
+WHERE ST_DWithin(ST_StartPoint(l.geom), v.the_geom, 0.00001);
+
+UPDATE ley_lines l SET target = v.id
+FROM ley_lines_vertices_pgr v
+WHERE ST_DWithin(ST_EndPoint(l.geom), v.the_geom, 0.00001);
+
 SELECT 'Ley Line Network Topology Created!' AS status_message;
 
 --------------------------------------------------------------------------------
