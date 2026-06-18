@@ -1,5 +1,5 @@
 ##############################################################################
-# Postgres 18 (Alpine) + PostGIS + pgvector + pgrouting + pg_cron
+# Postgres 18 (Alpine) + PostGIS + pgvector + pgrouting + pg_cron + timescaledb
 # – based on the official Postgres Alpine variant (compiled from source).
 #
 # Notes:
@@ -7,11 +7,13 @@
 # - pgvector is built from source via PGXS.
 # - pgRouting is omitted by default (heavy toolchain); can be enabled via arg.
 # - pg_cron is built from source via PGXS.
+# - timescaledb is built from source via CMake (TimescaleDB ships an Alpine
+#   image upstream, so the musl build path is supported).
 # - Apache AGE not yet compatible with PG 18
 ##############################################################################
 
 ARG PG_MAJOR=18
-ARG PG_VERSION=18.2
+ARG PG_VERSION=18.4
 FROM postgres:${PG_VERSION}-alpine
 
 # Default libpq user so client tools (psql, pg_isready) don't fall back to
@@ -26,6 +28,7 @@ ARG POSTGIS_VERSION=3.6.0
 ARG PGVECTOR_REF=v0.8.1
 ARG PGROUTING_REF=v3.7.3
 ARG PGCRON_REF=main
+ARG TIMESCALEDB_REF=2.28.0
 ARG WITH_PGROUTING=1
 
 # Base tools + runtime deps for PostGIS
@@ -46,7 +49,7 @@ RUN set -eux; \
 # Build dependencies (removed after install)
 RUN set -eux; \
     apk add --no-cache --virtual .build-deps \
-      llvm19-dev clang19 \
+      llvm21-dev clang21 \
       build-base \
       cmake \
       flex bison \
@@ -54,6 +57,9 @@ RUN set -eux; \
       geos-dev proj-dev gdal-dev json-c-dev protobuf-c-dev libxml2-dev \
       # optional: kerberos headers, etc.
       krb5-dev \
+      # openssl + icu headers for the timescaledb build
+      # (PG18's pg_locale.h pulls in <unicode/ucol.h> from ICU)
+      openssl-dev icu-dev \
       # for age/pgvector builds (PGXS via pg_config)
       perl
 
@@ -95,6 +101,18 @@ RUN set -eux; \
     && test -f "$(pg_config --pkglibdir)/pg_cron.so" \
     && cd / && rm -rf /tmp/build
 
+# ----- build timescaledb -----
+RUN set -eux; \
+    mkdir -p /tmp/build && cd /tmp/build && \
+    git clone --depth 1 --branch ${TIMESCALEDB_REF} https://github.com/timescale/timescaledb.git && \
+    cd timescaledb && \
+    ./bootstrap -DCMAKE_BUILD_TYPE=Release -DREGRESS_CHECKS=OFF -DWARNINGS_AS_ERRORS=OFF && \
+    cd build && make -j "$(nproc)" \
+    && make install \
+    && test -f "$(pg_config --sharedir)/extension/timescaledb.control" \
+    && test -f "$(pg_config --pkglibdir)/timescaledb.so" \
+    && cd / && rm -rf /tmp/build
+
 # ----- pgRouting (heavy), enabled by default to satisfy tests -----
 RUN set -eux; \
     if [ "${WITH_PGROUTING}" = "1" ]; then \
@@ -117,4 +135,5 @@ RUN apk del --no-network .build-deps
 
 USER postgres
 
-CMD ["postgres", "-c", "shared_preload_libraries=pg_cron"]
+# timescaledb must be listed in shared_preload_libraries; pg_cron alongside it.
+CMD ["postgres", "-c", "shared_preload_libraries=timescaledb,pg_cron"]

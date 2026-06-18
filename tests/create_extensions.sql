@@ -14,6 +14,7 @@ CREATE DATABASE test;
 CREATE EXTENSION IF NOT EXISTS postgis; -- spatial spells
 CREATE EXTENSION IF NOT EXISTS vector; -- tiny brains in columns
 CREATE EXTENSION IF NOT EXISTS pg_trgm; -- fuzzy text matching
+CREATE EXTENSION IF NOT EXISTS timescaledb; -- time bends here
 CREATE SCHEMA IF NOT EXISTS pgrouting;
 CREATE EXTENSION IF NOT EXISTS pgrouting SCHEMA pgrouting;
 -- actual roads, not just vibes
@@ -42,7 +43,7 @@ SELECT 'Running Initial Version Checks...' AS status_message;
 SELECT version() AS postgres_version;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron');
+WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron', 'timescaledb');
 SELECT pgr_version();
 
 --------------------------------------------------------------------------------
@@ -361,7 +362,7 @@ SELECT 'Running Final Version Checks...' AS status_message;
 SELECT version() AS postgres_version_final_check;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron');
+WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron', 'timescaledb');
 SELECT pgr_version() AS pgr_version_final_check;
 
 --------------------------------------------------------------------------------
