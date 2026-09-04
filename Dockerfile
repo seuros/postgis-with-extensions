@@ -5,7 +5,7 @@
 ##############################################################################
 
 ARG PG_MAJOR=18
-ARG PG_VERSION=18.4
+ARG PG_VERSION=18.6
 FROM postgres:${PG_VERSION}-bookworm
 
 # Default libpq user so client tools (psql, pg_isready) don't fall back to
