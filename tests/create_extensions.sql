@@ -12,6 +12,8 @@ CREATE DATABASE test;
 -- Extension Awakening Ceremony 🚪🪄
 --------------------------------------------------------------------------------
 CREATE EXTENSION IF NOT EXISTS postgis; -- spatial spells
+CREATE EXTENSION IF NOT EXISTS postgis_raster; -- pixels with coordinates
+CREATE EXTENSION IF NOT EXISTS postgis_sfcgal; -- 3D geometry sorcery
 CREATE EXTENSION IF NOT EXISTS vector; -- tiny brains in columns
 CREATE EXTENSION IF NOT EXISTS pg_trgm; -- fuzzy text matching
 CREATE EXTENSION IF NOT EXISTS timescaledb; -- time bends here
@@ -19,20 +21,7 @@ CREATE SCHEMA IF NOT EXISTS pgrouting;
 CREATE EXTENSION IF NOT EXISTS pgrouting SCHEMA pgrouting;
 -- actual roads, not just vibes
 
--- Optional extension: only create if packaged in the current image
-DO
-$$
-BEGIN
-	IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_cron')
-	   AND current_database() = COALESCE(current_setting('cron.database_name', true), 'postgres') THEN
-		CREATE EXTENSION IF NOT EXISTS pg_cron;
-	END IF;
-END
-$$;
-
--- Note: Apache AGE not yet compatible with PG 18
--- CREATE EXTENSION IF NOT EXISTS age;
--- LOAD 'age';
+-- pg_cron lives in cron.database_name (postgres); it is tested in the epilogue.
 
 SET search_path = public, pgrouting, "$user";
 
@@ -43,8 +32,9 @@ SELECT 'Running Initial Version Checks...' AS status_message;
 SELECT version() AS postgres_version;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron', 'timescaledb');
+WHERE extname IN ('postgis', 'postgis_raster', 'postgis_sfcgal', 'vector', 'pgrouting', 'pg_trgm', 'timescaledb');
 SELECT pgr_version();
+SELECT postgis_full_version();
 
 --------------------------------------------------------------------------------
 -- TABLE: spatial_data – Points of Doubt 🧭
@@ -68,6 +58,13 @@ SELECT id,
 FROM spatial_data
 ORDER BY distance_from_origin;
 
+-- Raster: a 2x2 tile whose every pixel holds the answer
+SELECT ST_Value(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI'::text, 42), 1, 1) AS raster_spirit;
+
+-- SFCGAL: extrude a square into a cube and weigh its soul
+SELECT postgis_sfcgal_version() AS sfcgal_version;
+SELECT CG_Volume(CG_MakeSolid(CG_Extrude(ST_MakeEnvelope(0, 0, 1, 1), 0, 0, 1))) AS cube_volume;
+
 --------------------------------------------------------------------------------
 -- TABLE: vector_data – Philosophical Embeddings 🧠
 --------------------------------------------------------------------------------
@@ -83,10 +80,15 @@ VALUES ('[1, 1, 1]', 'AI-powered incense recommendation'),
 	   ('[2, 2, 2]', 'Crypto for monks'),
 	   ('[3, 3, 3]', 'NFTs for ancient manuscripts');
 
+CREATE INDEX ON vector_data USING hnsw (embedding vector_l2_ops);
+SET enable_seqscan = off; -- make the planner walk the HNSW graph
+
 SELECT label, embedding
 FROM vector_data
-ORDER BY embedding <-> '[1.5, 1.5, 1.5]'
+ORDER BY embedding <-> '[2.9, 2.9, 2.9]'
 LIMIT 1;
+
+RESET enable_seqscan;
 
 --------------------------------------------------------------------------------
 -- TABLE: trgm_data – Fuzzy Text Matching 🔍
@@ -120,28 +122,6 @@ SELECT name, word_similarity('post', name) AS word_sim
 FROM trgm_data
 ORDER BY word_sim DESC
 LIMIT 3;
-
---------------------------------------------------------------------------------
--- Apache AGE: The Graph That Whispers 🌐🔮 (Not yet compatible with PG 18)
---------------------------------------------------------------------------------
--- DO
--- $$
--- 	BEGIN
--- 		PERFORM create_graph('social_graph');
--- 		PERFORM *
--- 		FROM cypher('social_graph',
--- 					$q$ CREATE (a:Person {name: 'Alice', age: 30}), (b:Person {name: 'Bob', age: 35}) $q$) AS (v agtype);
--- 		RAISE NOTICE 'Vertices in the graph:';
--- 		PERFORM * FROM cypher('social_graph', $q$ MATCH (n:Person) RETURN n $q$) AS (v agtype);
--- 		PERFORM *
--- 		FROM cypher('social_graph',
--- 					$q$ MATCH (a:Person), (b:Person) WHERE a.name = 'Alice' AND b.name = 'Bob' CREATE (a)-[e:KNOWS {relationship: 'Friends'}]->(b) RETURN e $q$) AS (e agtype);
--- 		RAISE NOTICE 'Edges in the graph:';
--- 		PERFORM *
--- 		FROM cypher('social_graph',
--- 					$q$ MATCH (a:Person)-[e:KNOWS]->(b:Person) RETURN a.name, b.name, e $q$) AS (a_name text, b_name text, e agtype);
--- 	END
--- $$;
 
 --------------------------------------------------------------------------------
 -- pgRouting: Ley Line Navigation Ritual 🗺️🔮 (Revised for Core Functionality)
@@ -356,13 +336,56 @@ ORDER BY timestamp
 LIMIT 1;
 
 --------------------------------------------------------------------------------
+-- TimescaleDB: Hypertables & Columnstore ⏱️
+-- (columnstore is TSL-licensed: this fails on an Apache-only build)
+--------------------------------------------------------------------------------
+CREATE TABLE incense_readings
+(
+	ts     TIMESTAMPTZ NOT NULL,
+	temple TEXT        NOT NULL,
+	smoke  DOUBLE PRECISION
+);
+
+SELECT create_hypertable('incense_readings', by_range('ts', INTERVAL '1 day'));
+
+INSERT INTO incense_readings (ts, temple, smoke)
+SELECT ts, temple, extract(HOUR FROM ts) -- smoke follows the sun; compresses well
+FROM generate_series(now() - INTERVAL '3 days', now(), INTERVAL '1 minute') AS ts,
+	 unnest(ARRAY ['Kyoto', 'Lhasa', 'Fez']) AS temple;
+
+ALTER TABLE incense_readings SET (
+	timescaledb.enable_columnstore = true,
+	timescaledb.segmentby = 'temple'
+	);
+
+SELECT count(compress_chunk(c)) AS chunks_sent_to_columnstore
+FROM show_chunks('incense_readings') c;
+
+DO
+$$
+BEGIN
+	IF NOT EXISTS (SELECT 1
+				   FROM timescaledb_information.chunks
+				   WHERE hypertable_name = 'incense_readings'
+					 AND is_compressed) THEN
+		RAISE EXCEPTION 'timescaledb columnstore did not compress any chunk';
+	END IF;
+END
+$$;
+
+SELECT temple, count(*) AS readings, round(avg(smoke)::numeric, 2) AS avg_smoke
+FROM incense_readings
+GROUP BY temple
+ORDER BY temple;
+
+--------------------------------------------------------------------------------
 -- Final Diagnostics Check
 --------------------------------------------------------------------------------
 SELECT 'Running Final Version Checks...' AS status_message;
 SELECT version() AS postgres_version_final_check;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'vector', 'pgrouting', 'pg_trgm', 'pg_cron', 'timescaledb');
+WHERE extname IN ('postgis', 'postgis_raster', 'postgis_sfcgal', 'vector', 'pgrouting', 'pg_trgm', 'timescaledb');
 SELECT pgr_version() AS pgr_version_final_check;
 
 --------------------------------------------------------------------------------
@@ -370,3 +393,22 @@ SELECT pgr_version() AS pgr_version_final_check;
 --------------------------------------------------------------------------------
 \c postgres
 DROP DATABASE test;
+
+--------------------------------------------------------------------------------
+-- pg_cron: Scheduled Rituals 🕰️ (must live in cron.database_name = postgres)
+--------------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+SELECT extname, extversion FROM pg_extension WHERE extname = 'pg_cron';
+SELECT cron.schedule('nightly-incense', '0 3 * * *', 'SELECT 1') AS job_id;
+
+DO
+$$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'nightly-incense') THEN
+		RAISE EXCEPTION 'pg_cron job was not scheduled';
+	END IF;
+END
+$$;
+
+SELECT cron.unschedule('nightly-incense');
+DROP EXTENSION pg_cron;

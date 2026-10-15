@@ -1,32 +1,39 @@
+# `docker compose up -d` runs the published image (IMAGE_TAG / IMAGE_FLAVOR pick
+# the variant). `make test` and CI point IMAGE_NAME/IMAGE_TAG at a local build
+# and run the `sut` service, which reuses the image under test as psql client.
+x-image: &image ${IMAGE_NAME:-ghcr.io/seuros/postgis-with-extensions}:${IMAGE_TAG:-18}${IMAGE_FLAVOR:-}
+
 services:
   postgres:
-    image: ${IMAGE_NAME:-ghcr.io/seuros/postgis-with-extensions}:${IMAGE_TAG:-18}${IMAGE_FLAVOR:-}
-    container_name: postgres
+    image: *image
     environment:
       POSTGRES_USER: ibn_trippin
       POSTGRES_PASSWORD: camelvisions420
       POSTGRES_DB: sufi_geo_delirium
-      POSTGRES_HOST_AUTH_METHOD: md5 # (default, explicit for clarity)
       TZ: UTC
     ports:
       - "5432" # random host port; container remains on 5432
-    networks: [ pgtest_network ]
+    healthcheck:
+      # TCP on purpose: the entrypoint's init-time server only listens on the
+      # unix socket, so this turns healthy only once the real server is up.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "ibn_trippin", "-d", "sufi_geo_delirium"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
 
   sut:
-    # System‑Under‑Test container
-    build: ./tests
-    container_name: sut
+    # System-Under-Test: only started via `docker compose run sut`
+    image: *image
+    profiles: [test]
+    entrypoint: ["psql"]
     command:
-      - "/tests/wait-for-postgres.sh"
-      - "psql"
       - "postgresql://ibn_trippin:camelvisions420@postgres:5432/sufi_geo_delirium"
+      - "-X"
       - "-a"
       - "-f"
       - "/tests/create_extensions.sql"
-    depends_on: [ postgres ]
-    restart: "no"
-    networks: [ pgtest_network ]
-
-networks:
-  pgtest_network:
-    driver: bridge
+    volumes:
+      - ./tests:/tests:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
