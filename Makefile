@@ -1,104 +1,87 @@
 ## Image coordinates (override with `make IMAGE_NAME=...` if desired)
 IMAGE_NAME ?= ghcr.io/seuros/postgis-with-extensions
 
-## Extract versions from Dockerfile
-PG_VERSION ?= $(shell sed -n 's/^ARG PG_VERSION=\(.*\)/\1/p' Dockerfile)
-PG_MAJOR   ?= $(shell echo $(PG_VERSION) | cut -d. -f1)
+## Versions come from the FROM line of the Dockerfile (single source of truth)
+PG_VERSION := $(shell sed -nE 's/^FROM postgres:([0-9]+\.[0-9]+)-.*/\1/p' Dockerfile)
+PG_MAJOR   := $(firstword $(subst ., ,$(PG_VERSION)))
 
-.PHONY: build build-tags build-no-cache tag push \
-        build-alpine tag-alpine push-alpine build-all \
-        clean clean-test rebuild-test list test help print-vars
-
-# Default target: build and tag all variants
-build: build-tags
-
-# Build the image pinned to PG_VERSION and tag as :PG_MAJOR and :latest
-build-tags:
-	docker build --build-arg PG_VERSION=$(PG_VERSION) -t $(IMAGE_NAME):$(PG_VERSION) .
-	docker tag $(IMAGE_NAME):$(PG_VERSION) $(IMAGE_NAME):$(PG_MAJOR)
-	docker tag $(IMAGE_NAME):$(PG_VERSION) $(IMAGE_NAME):latest
-
-# Build without cache, then re-tag
-build-no-cache:
-	docker build --no-cache --pull --build-arg PG_VERSION=$(PG_VERSION) -t $(IMAGE_NAME):$(PG_VERSION) .
-	docker tag $(IMAGE_NAME):$(PG_VERSION) $(IMAGE_NAME):$(PG_MAJOR)
-	docker tag $(IMAGE_NAME):$(PG_VERSION) $(IMAGE_NAME):latest
-
-# Tag an existing local image explicitly (useful if you built via compose)
-tag:
-	docker tag $(IMAGE_NAME):$(PG_VERSION) $(IMAGE_NAME):$(PG_MAJOR)
-	docker tag $(IMAGE_NAME):$(PG_VERSION) $(IMAGE_NAME):latest
-
-# Push all tags
-push:
-	docker push $(IMAGE_NAME):$(PG_VERSION)
-	docker push $(IMAGE_NAME):$(PG_MAJOR)
-	docker push $(IMAGE_NAME):latest
-
-# ------------------------ Alpine variant ------------------------
 ALPINE_DOCKERFILE ?= Dockerfile.alpine
-ALPINE_BUILD_ARGS ?=
+PLATFORMS         ?= linux/amd64,linux/arm64
+## Extra flags for docker build, e.g. BUILD_ARGS="--no-cache --build-arg WITH_PGROUTING=0"
+BUILD_ARGS        ?=
 
-build-alpine:
-	docker build -f $(ALPINE_DOCKERFILE) \
-	  --build-arg PG_VERSION=$(PG_VERSION) \
-	  $(ALPINE_BUILD_ARGS) \
-	  -t $(IMAGE_NAME):$(PG_VERSION)-alpine .
-	docker tag $(IMAGE_NAME):$(PG_VERSION)-alpine $(IMAGE_NAME):$(PG_MAJOR)-alpine
-	docker tag $(IMAGE_NAME):$(PG_VERSION)-alpine $(IMAGE_NAME):alpine
+COMPOSE_TEST = docker compose -p pgx-test
 
-tag-alpine:
-	docker tag $(IMAGE_NAME):$(PG_VERSION)-alpine $(IMAGE_NAME):$(PG_MAJOR)-alpine
-	docker tag $(IMAGE_NAME):$(PG_VERSION)-alpine $(IMAGE_NAME):alpine
+.PHONY: build build-alpine build-all test test-alpine test-all run-test \
+        push push-alpine clean-test check-versions help print-vars
 
-push-alpine:
-	docker push $(IMAGE_NAME):$(PG_VERSION)-alpine
-	docker push $(IMAGE_NAME):$(PG_MAJOR)-alpine
-	docker push $(IMAGE_NAME):alpine
+## Build the Debian image, tagged :PG_VERSION, :PG_MAJOR and :latest
+build: check-versions
+	docker build $(BUILD_ARGS) \
+	  -t $(IMAGE_NAME):$(PG_VERSION) -t $(IMAGE_NAME):$(PG_MAJOR) -t $(IMAGE_NAME):latest .
 
-# Build both Debian and Alpine flavors
-build-all: build-tags build-alpine
+## Build the Alpine image, tagged :PG_VERSION-alpine, :PG_MAJOR-alpine and :alpine
+build-alpine: check-versions
+	docker build -f $(ALPINE_DOCKERFILE) $(BUILD_ARGS) \
+	  -t $(IMAGE_NAME):$(PG_VERSION)-alpine -t $(IMAGE_NAME):$(PG_MAJOR)-alpine -t $(IMAGE_NAME):alpine .
 
-# Target to clean up dangling images
-clean:
-	docker system prune -f
+build-all: build build-alpine
 
-# Target to stop and remove the test containers
+## Run the SQL suite against the locally built image
+test: build
+	$(MAKE) --no-print-directory run-test IMAGE_TAG=$(PG_VERSION) IMAGE_FLAVOR=
+
+test-alpine: build-alpine
+	$(MAKE) --no-print-directory run-test IMAGE_TAG=$(PG_VERSION) IMAGE_FLAVOR=-alpine
+
+test-all: test test-alpine
+
+# Runs the suite against IMAGE_NAME:IMAGE_TAG IMAGE_FLAVOR (no build); used by CI.
+run-test:
+	@IMAGE_NAME=$(IMAGE_NAME) IMAGE_TAG=$(IMAGE_TAG) IMAGE_FLAVOR=$(IMAGE_FLAVOR) sh -c '\
+	  $(COMPOSE_TEST) run --rm sut; status=$$?; \
+	  [ $$status -eq 0 ] || $(COMPOSE_TEST) logs postgres; \
+	  $(COMPOSE_TEST) down -v --remove-orphans >/dev/null 2>&1; \
+	  exit $$status'
+
+## Multi-arch build + push (CI normally does this; plain `docker push` from a
+## single-arch host would clobber the published multi-arch tags)
+push: check-versions
+	docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) --push \
+	  -t $(IMAGE_NAME):$(PG_VERSION) -t $(IMAGE_NAME):$(PG_MAJOR) -t $(IMAGE_NAME):latest .
+
+push-alpine: check-versions
+	docker buildx build --platform $(PLATFORMS) -f $(ALPINE_DOCKERFILE) $(BUILD_ARGS) --push \
+	  -t $(IMAGE_NAME):$(PG_VERSION)-alpine -t $(IMAGE_NAME):$(PG_MAJOR)-alpine -t $(IMAGE_NAME):alpine .
+
+## Stop and remove test containers and volumes
 clean-test:
-	docker compose down -v
+	$(COMPOSE_TEST) --profile test down -v --remove-orphans
 
-# Target to rebuild and restart the test environment
-rebuild-test: clean-test build
-	docker compose up
+## Fail if the Debian and Alpine Dockerfiles disagree on the Postgres version
+check-versions:
+	@alpine=$$(sed -nE 's/^FROM postgres:([0-9]+\.[0-9]+)-.*/\1/p' $(ALPINE_DOCKERFILE)); \
+	if [ -z "$(PG_VERSION)" ] || [ "$(PG_VERSION)" != "$$alpine" ]; then \
+	  echo "PG version mismatch: Dockerfile='$(PG_VERSION)' $(ALPINE_DOCKERFILE)='$$alpine'" >&2; exit 1; \
+	fi
 
-# Target to list all images
-list:
-	docker images
-
-# Target to run the test container
-test:
-	docker compose up --build
-
-# Help target to display available commands
 help:
 	@echo "Usage: make <target>"
 	@echo
 	@echo "Targets:"
-	@echo "  build              Build and tag :$(PG_VERSION), :$(PG_MAJOR), and :latest"
-	@echo "  build-no-cache     Build without cache and re-tag"
-	@echo "  tag                Add :$(PG_MAJOR) and :latest tags to an existing :$(PG_VERSION) image"
-	@echo "  push               Push :$(PG_VERSION), :$(PG_MAJOR), and :latest to registry"
-	@echo "  build-alpine       Build Alpine variant and tag :-alpine variants"
-	@echo "  tag-alpine         Add :-alpine tags to an existing Alpine build"
-	@echo "  push-alpine        Push Alpine tags (:$(PG_VERSION)-alpine, :$(PG_MAJOR)-alpine, :alpine)"
-	@echo "  clean              Clean up dangling Docker images"
-	@echo "  clean-test         Stop and remove test containers and their volumes"
-	@echo "  rebuild-test       Clean test containers, rebuild image, and restart test environment"
-	@echo "  list               List all Docker images"
-	@echo "  test               Test if the server can install and query database"
-	@echo "  help               Show this help message"
+	@echo "  build         Build Debian image  -> :$(PG_VERSION), :$(PG_MAJOR), :latest"
+	@echo "  build-alpine  Build Alpine image  -> :$(PG_VERSION)-alpine, :$(PG_MAJOR)-alpine, :alpine"
+	@echo "  build-all     Build both flavours"
+	@echo "  test          Build + run the SQL suite against the Debian image"
+	@echo "  test-alpine   Build + run the SQL suite against the Alpine image"
+	@echo "  test-all      Both of the above"
+	@echo "  push          Multi-arch ($(PLATFORMS)) build + push of the Debian image"
+	@echo "  push-alpine   Multi-arch build + push of the Alpine image"
+	@echo "  clean-test    Remove test containers and volumes"
+	@echo "  print-vars    Show resolved variables"
+	@echo
+	@echo "Pass extra docker build flags via BUILD_ARGS, e.g. BUILD_ARGS=--no-cache"
 
-# Show resolved variables
 print-vars:
 	@echo IMAGE_NAME=$(IMAGE_NAME)
 	@echo PG_VERSION=$(PG_VERSION)

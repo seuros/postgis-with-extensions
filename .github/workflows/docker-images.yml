@@ -1,115 +1,203 @@
-name: Build and Publish Docker Images
+name: Docker images
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ master ]
     tags: [ 'v*', 'release-*' ]
+  pull_request:
+  schedule:
+    # Weekly rebuild so base-image and apt/apk security updates land
+    - cron: '17 4 * * 1'
   workflow_dispatch: {}
 
 permissions:
   contents: read
-  packages: write
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 concurrency:
-  group: docker-publish-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   prepare:
-    name: Prepare variables
-    runs-on: ubuntu-latest
+    name: Resolve versions
+    runs-on: ubuntu-26.04
     outputs:
-      PG_VERSION: ${{ steps.vars.outputs.PG_VERSION }}
-      PG_MAJOR: ${{ steps.vars.outputs.PG_MAJOR }}
+      pg_version: ${{ steps.vars.outputs.pg_version }}
+      pg_major: ${{ steps.vars.outputs.pg_major }}
+      push: ${{ steps.vars.outputs.push }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Extract PG version from Dockerfile
+      - name: Read PG version from the Dockerfiles
         id: vars
+        env:
+          # Publish from master and release tags only; everything else is build + test.
+          PUSH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')) }}
         run: |
-          PG_VERSION=$(sed -n "s/^ARG PG_VERSION=\(.*\)/\1/p" Dockerfile)
-          if [ -z "$PG_VERSION" ]; then
-            echo "Failed to find ARG PG_VERSION in Dockerfile" >&2
-            exit 1
+          make --no-print-directory check-versions
+          eval "$(make --no-print-directory print-vars)"
+          {
+            echo "pg_version=$PG_VERSION"
+            echo "pg_major=$PG_MAJOR"
+            echo "push=$PUSH"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    name: Build + test (${{ matrix.flavor }}, ${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [ debian, alpine ]
+        arch: [ amd64, arm64 ]
+        include:
+          # native runners per arch: no QEMU, even for the from-source Alpine build
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+          - flavor: debian
+            dockerfile: Dockerfile
+          - flavor: alpine
+            dockerfile: Dockerfile.alpine
+    env:
+      CACHE_SCOPE: ${{ matrix.flavor }}-${{ matrix.arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image for testing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          pull: true
+          # weekly rebuilds bypass the cache so package upgrades are picked up
+          no-cache: ${{ github.event_name == 'schedule' }}
+          tags: pgx-ci:test
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
+
+      - name: Run SQL test suite
+        run: make --no-print-directory run-test IMAGE_NAME=pgx-ci IMAGE_TAG=test IMAGE_FLAVOR=
+
+      - name: Docker metadata
+        id: meta
+        if: needs.prepare.outputs.push == 'true'
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+
+      - name: Log in to GHCR
+        if: needs.prepare.outputs.push == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same build as above, served from the builder's local cache.
+      - name: Push by digest
+        id: push
+        if: needs.prepare.outputs.push == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Export digest
+        if: needs.prepare.outputs.push == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        if: needs.prepare.outputs.push == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.flavor }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish (${{ matrix.flavor }})
+    needs: [ prepare, build ]
+    if: needs.prepare.outputs.push == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [ debian, alpine ]
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.flavor }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest and tag
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          PG_VERSION: ${{ needs.prepare.outputs.pg_version }}
+          PG_MAJOR: ${{ needs.prepare.outputs.pg_major }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if [ "$FLAVOR" = alpine ]; then
+            tags="$PG_VERSION-alpine $PG_MAJOR-alpine alpine"
+          else
+            tags="$PG_VERSION $PG_MAJOR latest"
           fi
-          PG_MAJOR=${PG_VERSION%%.*}
-          echo "PG_VERSION=$PG_VERSION" | tee -a $GITHUB_OUTPUT
-          echo "PG_MAJOR=$PG_MAJOR" | tee -a $GITHUB_OUTPUT
+          set --
+          for t in $tags; do set -- "$@" -t "$IMAGE_NAME:$t"; done
+          for d in *; do set -- "$@" "$IMAGE_NAME@sha256:$d"; done
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=$SOURCE_URL" \
+            --annotation "index:org.opencontainers.image.description=PostgreSQL $PG_VERSION ($FLAVOR) with PostGIS, pgvector, pgRouting, pg_cron and TimescaleDB" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            "$@"
+          echo "PRIMARY_TAG=${tags%% *}" >> "$GITHUB_ENV"
 
-  build-debian:
-    name: Build + Push (Debian)
-    needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push (Debian)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            PG_VERSION=${{ needs.prepare.outputs.PG_VERSION }}
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_VERSION }}
-            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_MAJOR }}
-            ${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  build-alpine:
-    name: Build + Push (Alpine)
-    needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push (Alpine-from-source)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.alpine
-          push: true
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            PG_VERSION=${{ needs.prepare.outputs.PG_VERSION }}
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_VERSION }}-alpine
-            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.PG_MAJOR }}-alpine
-            ${{ env.IMAGE_NAME }}:alpine
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Inspect
+        run: docker buildx imagetools inspect "$IMAGE_NAME:$PRIMARY_TAG"

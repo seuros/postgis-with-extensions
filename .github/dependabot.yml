@@ -1,9 +1,16 @@
 version: 2
 updates:
+  # Bumps the postgres base tags in Dockerfile and Dockerfile.alpine (one PR).
+  # Majors are ignored: a new PG major needs every extension to support it first.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: feat(images)
+    ignore:
+      - dependency-name: postgres
+        update-types: [ "version-update:semver-major" ]
     groups:
       img-dependencies:
         patterns:
@@ -13,6 +20,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: ci
     groups:
       ci-dependencies:
         patterns:
