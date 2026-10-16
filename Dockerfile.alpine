@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 ##############################################################################
-# PostgreSQL 18 (Alpine) + PostGIS + pgvector + pgRouting + pg_cron + TimescaleDB
+# PostgreSQL 18 (Alpine) + PostGIS + pgvector + pgRouting + pg_cron
+#   + H3 + pg_partman + pgTAP + HypoPG + pg_repack
 # – based on the official postgres Alpine variant, extensions compiled from
 #   source against its /usr/local Postgres.
 #
@@ -61,22 +62,63 @@ RUN set -eux; \
     make -j"$(nproc)"; \
     make install DESTDIR=/out
 
-# ----- TimescaleDB (incl. TSL features) -------------------------------------
-FROM toolchain AS timescaledb
-ARG TIMESCALEDB_VERSION=2.30.2
-# openssl + icu headers: PG18's pg_locale.h pulls in <unicode/ucol.h>
-RUN apk add --no-cache openssl-dev icu-dev
+# The stages below are pinned to the versions Amazon RDS for PostgreSQL 18
+# ships; keep them in sync with the Debian Dockerfile.
+
+# ----- H3 (h3 + h3_postgis) -------------------------------------------------
+FROM toolchain AS h3
+ARG H3_VERSION=4.2.3
+# CMake fetches the SHA256-pinned uber/h3 core and links it statically; only
+# the extension component is installed, so no core headers/libs ship.
 RUN set -eux; \
-    git clone --depth 1 --branch "${TIMESCALEDB_VERSION}" https://github.com/timescale/timescaledb.git; \
-    cd timescaledb; \
-    ./bootstrap \
+    git clone --depth 1 --branch "v${H3_VERSION}" https://github.com/postgis/h3-pg.git; \
+    cmake -S h3-pg -B h3-pg/build \
       -DCMAKE_BUILD_TYPE=Release \
-      -DREGRESS_CHECKS=OFF \
-      -DTAP_CHECKS=OFF \
-      -DWARNINGS_AS_ERRORS=OFF \
-      -DPROJECT_INSTALL_METHOD=docker; \
-    make -C build -j"$(nproc)"; \
-    make -C build install DESTDIR=/out
+      -DBUILD_TESTING=OFF \
+      -DPostgreSQL_CONFIG=/usr/local/bin/pg_config; \
+    cmake --build h3-pg/build -j"$(nproc)"; \
+    DESTDIR=/out cmake --install h3-pg/build --component h3-pg
+
+# ----- pg_partman -----------------------------------------------------------
+FROM toolchain AS pgpartman
+ARG PGPARTMAN_VERSION=5.4.3
+# SCRIPTS= skips the Python helper scripts: no python3/psycopg2 in this image.
+RUN set -eux; \
+    git clone --depth 1 --branch "v${PGPARTMAN_VERSION}" https://github.com/pgpartman/pg_partman.git; \
+    cd pg_partman; \
+    make -j"$(nproc)"; \
+    make install DESTDIR=/out SCRIPTS=
+
+# ----- pgTAP ----------------------------------------------------------------
+FROM toolchain AS pgtap
+ARG PGTAP_VERSION=1.3.4
+RUN set -eux; \
+    git clone --depth 1 --branch "v${PGTAP_VERSION}" https://github.com/theory/pgtap.git; \
+    cd pgtap; \
+    make -j"$(nproc)"; \
+    make install DESTDIR=/out
+
+# ----- HypoPG ---------------------------------------------------------------
+FROM toolchain AS hypopg
+ARG HYPOPG_VERSION=1.4.2
+RUN set -eux; \
+    git clone --depth 1 --branch "${HYPOPG_VERSION}" https://github.com/HypoPG/hypopg.git; \
+    cd hypopg; \
+    make -j"$(nproc)"; \
+    make install DESTDIR=/out
+
+# ----- pg_repack (extension + client) ---------------------------------------
+FROM toolchain AS pgrepack
+ARG PGREPACK_VERSION=1.5.3
+# The pg_repack client links the frontend libs from `pg_config --libs`.
+# gawk: PGXS (AWK = gawk) builds the library's linker version script with it,
+# and a missing gawk silently yields an empty script.
+RUN apk add --no-cache gawk lz4-dev openssl-dev zlib-dev zstd-dev
+RUN set -eux; \
+    git clone --depth 1 --branch "ver_${PGREPACK_VERSION}" https://github.com/reorg/pg_repack.git; \
+    cd pg_repack; \
+    make -j"$(nproc)"; \
+    make install DESTDIR=/out
 
 # ----- pgRouting (skip with --build-arg WITH_PGROUTING=0) -------------------
 FROM toolchain AS pgrouting-1
@@ -100,7 +142,11 @@ FROM scratch AS extensions
 COPY --from=postgis     /out/ /
 COPY --from=pgvector    /out/ /
 COPY --from=pgcron      /out/ /
-COPY --from=timescaledb /out/ /
+COPY --from=h3          /out/ /
+COPY --from=pgpartman   /out/ /
+COPY --from=pgtap       /out/ /
+COPY --from=hypopg      /out/ /
+COPY --from=pgrepack    /out/ /
 COPY --from=pgrouting   /out/ /
 
 # ----- final image ----------------------------------------------------------
@@ -131,15 +177,18 @@ RUN --mount=type=bind,from=extensions,target=/tmp/extensions \
     apk del --no-network .scan-deps; \
     ext="$(pg_config --sharedir)/extension"; \
     lib="$(pg_config --pkglibdir)"; \
-    for e in postgis postgis_raster postgis_sfcgal postgis_topology vector pg_cron timescaledb; do \
+    for e in postgis postgis_raster postgis_sfcgal postgis_topology vector pg_cron \
+             h3 h3_postgis pg_partman pgtap hypopg pg_repack; do \
       test -f "$ext/$e.control"; \
     done; \
-    test -f "$lib/vector.so"; \
-    test -f "$lib/pg_cron.so"; \
-    test -f "$lib/timescaledb.so"; \
-    ls "$lib"/postgis-3.so "$lib"/postgis_raster-3.so "$lib"/postgis_sfcgal-3.so
+    for m in vector pg_cron h3 h3_postgis pg_partman_bgw hypopg pg_repack; do \
+      test -f "$lib/$m.so"; \
+    done; \
+    ls "$lib"/postgis-3.so "$lib"/postgis_raster-3.so "$lib"/postgis_sfcgal-3.so; \
+    # the client must resolve its shared libraries
+    pg_repack --version
 
 USER postgres
 
-# timescaledb must be listed in shared_preload_libraries; pg_cron alongside it.
-CMD ["postgres", "-c", "shared_preload_libraries=timescaledb,pg_cron"]
+# pg_cron must be listed in shared_preload_libraries.
+CMD ["postgres", "-c", "shared_preload_libraries=pg_cron"]

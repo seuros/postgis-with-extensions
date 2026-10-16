@@ -194,7 +194,7 @@ jobs:
           for d in *; do set -- "$@" "$IMAGE_NAME@sha256:$d"; done
           docker buildx imagetools create \
             --annotation "index:org.opencontainers.image.source=$SOURCE_URL" \
-            --annotation "index:org.opencontainers.image.description=PostgreSQL $PG_VERSION ($FLAVOR) with PostGIS, pgvector, pgRouting, pg_cron and TimescaleDB" \
+            --annotation "index:org.opencontainers.image.description=PostgreSQL $PG_VERSION ($FLAVOR) with PostGIS, pgvector, pgRouting, pg_cron, H3, pg_partman, pgTAP, HypoPG and pg_repack" \
             --annotation "index:org.opencontainers.image.licenses=MIT" \
             "$@"
           echo "PRIMARY_TAG=${tags%% *}" >> "$GITHUB_ENV"

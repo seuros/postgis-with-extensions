@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 ##############################################################################
-# PostgreSQL 18 + PostGIS 3 + pgvector + pgRouting + pg_cron + TimescaleDB
+# PostgreSQL 18 + PostGIS 3 + pgvector + pgRouting + pg_cron
+#   + H3 + pg_partman + pgTAP + HypoPG + pg_repack
 # Debian (trixie) flavour, based on the official postgres image so the cluster
 # is created at runtime by the upstream entrypoint.
 #
@@ -12,42 +13,40 @@ FROM postgres:18.6-trixie
 # Build-time only: krb5-config asks for a default realm otherwise.
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Pinned to the versions Amazon RDS for PostgreSQL 18 ships, so nothing here
+# depends on a feature RDS doesn't have yet. Keep in sync with
+# Dockerfile.alpine. apt fails the build once PGDG drops a pinned version.
+ARG H3_VERSION=4.2.3
+ARG PGPARTMAN_VERSION=5.4.3
+ARG PGTAP_VERSION=1.3.4
+ARG HYPOPG_VERSION=1.4.2
+ARG PGREPACK_VERSION=1.5.3
+
 # Default libpq user so client tools (psql, pg_isready) don't fall back to
 # the runtime OS user (root in many CI environments), which avoids noisy
 # "role \"root\" does not exist" connection attempts. Users can override.
 ENV PGUSER=postgres
 
-# The base image already ships the PGDG apt source. TimescaleDB comes from
-# Timescale's own repo because PGDG's build is Apache-only (no compression,
-# continuous aggregates, ...).
+# Everything comes from PGDG; the base image already ships its apt source.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl; \
-    curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey \
-      -o /usr/share/keyrings/timescaledb.asc; \
-    . /etc/os-release; \
-    echo "deb [signed-by=/usr/share/keyrings/timescaledb.asc] https://packagecloud.io/timescale/timescaledb/debian/ ${VERSION_CODENAME} main" \
-      > /etc/apt/sources.list.d/timescaledb.list; \
-    # packagecloud's by-hash index is flaky under BuildKit; retry until the
-    # timescaledb package metadata is actually visible before moving on.
-    for i in 1 2 3 4 5; do \
-      apt-get -o Acquire::Retries=3 update \
-        && apt-cache show "timescaledb-2-postgresql-${PG_MAJOR}" >/dev/null 2>&1 \
-        && break; \
-      echo "timescaledb index not ready (attempt $i), retrying..."; sleep 3; \
-    done; \
     apt-get install -y --no-install-recommends \
       "postgresql-${PG_MAJOR}-postgis-3" \
       "postgresql-${PG_MAJOR}-postgis-3-scripts" \
       "postgresql-${PG_MAJOR}-pgrouting" \
       "postgresql-${PG_MAJOR}-pgvector" \
       "postgresql-${PG_MAJOR}-cron" \
-      "timescaledb-2-postgresql-${PG_MAJOR}" \
+      "postgresql-${PG_MAJOR}-h3=${H3_VERSION}-*" \
+      "postgresql-${PG_MAJOR}-partman=${PGPARTMAN_VERSION}-*" \
+      "postgresql-${PG_MAJOR}-pgtap=${PGTAP_VERSION}-*" \
+      "postgresql-${PG_MAJOR}-hypopg=${HYPOPG_VERSION}-*" \
+      "postgresql-${PG_MAJOR}-repack=${PGREPACK_VERSION}-*" \
+      ca-certificates \
       # Kerberos client + PAM module for GSSAPI/PAM auth setups
       krb5-user libpam-krb5; \
     rm -rf /var/lib/apt/lists/*
 
 USER postgres
 
-# timescaledb must be listed in shared_preload_libraries; pg_cron alongside it.
-CMD ["postgres", "-c", "shared_preload_libraries=timescaledb,pg_cron"]
+# pg_cron must be listed in shared_preload_libraries.
+CMD ["postgres", "-c", "shared_preload_libraries=pg_cron"]

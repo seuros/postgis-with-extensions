@@ -26,6 +26,11 @@ services:
     image: *image
     profiles: [test]
     entrypoint: ["psql"]
+    # for client tools the suite shells out to (pg_repack)
+    environment:
+      PGHOST: postgres
+      PGUSER: ibn_trippin
+      PGPASSWORD: camelvisions420
     command:
       - "postgresql://ibn_trippin:camelvisions420@postgres:5432/sufi_geo_delirium"
       - "-X"

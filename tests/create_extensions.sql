@@ -16,7 +16,13 @@ CREATE EXTENSION IF NOT EXISTS postgis_raster; -- pixels with coordinates
 CREATE EXTENSION IF NOT EXISTS postgis_sfcgal; -- 3D geometry sorcery
 CREATE EXTENSION IF NOT EXISTS vector; -- tiny brains in columns
 CREATE EXTENSION IF NOT EXISTS pg_trgm; -- fuzzy text matching
-CREATE EXTENSION IF NOT EXISTS timescaledb; -- time bends here
+CREATE EXTENSION IF NOT EXISTS h3; -- the world, tiled by bees
+CREATE EXTENSION IF NOT EXISTS h3_postgis; -- bees that speak geometry
+CREATE EXTENSION IF NOT EXISTS pgtap; -- the database grades its own homework
+CREATE EXTENSION IF NOT EXISTS hypopg; -- indexes that exist only in dreams
+CREATE EXTENSION IF NOT EXISTS pg_repack; -- tidy the heap without locking it
+CREATE SCHEMA IF NOT EXISTS partman;
+CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman; -- time, sliced RDS-style
 CREATE SCHEMA IF NOT EXISTS pgrouting;
 CREATE EXTENSION IF NOT EXISTS pgrouting SCHEMA pgrouting;
 -- actual roads, not just vibes
@@ -32,7 +38,8 @@ SELECT 'Running Initial Version Checks...' AS status_message;
 SELECT version() AS postgres_version;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'postgis_raster', 'postgis_sfcgal', 'vector', 'pgrouting', 'pg_trgm', 'timescaledb');
+WHERE extname IN ('postgis', 'postgis_raster', 'postgis_sfcgal', 'vector', 'pgrouting', 'pg_trgm',
+				  'h3', 'h3_postgis', 'pgtap', 'hypopg', 'pg_repack', 'pg_partman');
 SELECT pgr_version();
 SELECT postgis_full_version();
 
@@ -336,39 +343,121 @@ ORDER BY timestamp
 LIMIT 1;
 
 --------------------------------------------------------------------------------
--- TimescaleDB: Hypertables & Columnstore ⏱️
--- (columnstore is TSL-licensed: this fails on an Apache-only build)
+-- H3: Hexagonal Pilgrim Density 🐝
+--------------------------------------------------------------------------------
+CREATE TABLE pilgrim_sightings
+(
+	id   SERIAL PRIMARY KEY,
+	geom geometry(Point, 4326) NOT NULL
+);
+
+-- a deterministic 40x40 grid over Fez (all of it inside tile z10/497/408)
+INSERT INTO pilgrim_sightings (geom)
+SELECT ST_Point(-4.98 + (i % 40) * 0.001, 34.03 + (i / 40) * 0.001, 4326)
+FROM generate_series(0, 1599) AS i;
+
+SELECT h3_latlng_to_cell(geom, 8) AS cell, count(*) AS sightings
+FROM pilgrim_sightings
+GROUP BY cell
+ORDER BY sightings DESC, cell
+LIMIT 5;
+
+DO
+$$
+DECLARE
+	cells  bigint;
+	strays bigint;
+BEGIN
+	SELECT count(DISTINCT h3_latlng_to_cell(geom, 8)) INTO cells FROM pilgrim_sightings;
+	IF cells NOT BETWEEN 2 AND 100 THEN
+		RAISE EXCEPTION 'h3: implausible binning, % res-8 cells for a ~4 km grid', cells;
+	END IF;
+
+	-- every point must sit inside the boundary of the cell it was binned into
+	SELECT count(*) INTO strays
+	FROM pilgrim_sightings
+	WHERE NOT ST_Intersects(h3_cell_to_boundary_geometry(h3_latlng_to_cell(geom, 8)), geom);
+	IF strays > 0 THEN
+		RAISE EXCEPTION 'h3: % sightings fall outside their own cell', strays;
+	END IF;
+END
+$$;
+
+-- What a graticule density layer looks like: H3 bins clipped to an MVT tile
+CREATE FUNCTION hex_density_tile(z integer, x integer, y integer, res integer DEFAULT 8)
+	RETURNS bytea
+	LANGUAGE sql
+	STABLE
+	PARALLEL SAFE
+AS
+$$
+WITH bounds AS (SELECT ST_TileEnvelope(z, x, y) AS env),
+	 hexes AS (SELECT h3_latlng_to_cell(s.geom, res) AS cell, count(*) AS sightings
+			   FROM pilgrim_sightings s, bounds b
+			   WHERE s.geom && ST_Transform(b.env, 4326)
+			   GROUP BY 1),
+	 mvt AS (SELECT h.cell::text AS h3, h.sightings,
+					ST_AsMVTGeom(ST_Transform(h3_cell_to_boundary_geometry(h.cell), 3857), b.env) AS geom
+			 FROM hexes h, bounds b)
+SELECT ST_AsMVT(mvt, 'hexes')
+FROM mvt
+WHERE geom IS NOT NULL;
+$$;
+
+--------------------------------------------------------------------------------
+-- pgTAP: The Database Grades Its Own Homework 📝
+-- (finish(true) raises on any failure, so ON_ERROR_STOP fails the suite)
+--------------------------------------------------------------------------------
+BEGIN;
+SELECT plan(6);
+
+SELECT has_extension('h3');
+SELECT has_function('hex_density_tile', ARRAY ['integer', 'integer', 'integer', 'integer']);
+SELECT is(h3_get_resolution(h3_latlng_to_cell(ST_Point(-4.97, 34.04, 4326), 8)), 8,
+		  'cells come back at the requested resolution');
+SELECT is((SELECT count(*) FROM h3_grid_disk(h3_latlng_to_cell(ST_Point(-4.97, 34.04, 4326), 8), 1)), 7::bigint,
+		  'a hexagon has six neighbours');
+SELECT cmp_ok(length(hex_density_tile(10, 497, 408)), '>', 0, 'the Fez tile carries hexagons');
+SELECT is(coalesce(length(hex_density_tile(10, 0, 0)), 0), 0, 'an ocean tile stays empty');
+
+SELECT * FROM finish(true);
+ROLLBACK;
+
+--------------------------------------------------------------------------------
+-- pg_partman: Time Slicing, RDS-Approved ⏱️🔪
 --------------------------------------------------------------------------------
 CREATE TABLE incense_readings
 (
 	ts     TIMESTAMPTZ NOT NULL,
 	temple TEXT        NOT NULL,
 	smoke  DOUBLE PRECISION
-);
+) PARTITION BY RANGE (ts);
 
-SELECT create_hypertable('incense_readings', by_range('ts', INTERVAL '1 day'));
+SELECT partman.create_parent(
+	p_parent_table := 'public.incense_readings',
+	p_control := 'ts',
+	p_interval := '1 day',
+	p_premake := 4,
+	p_start_partition := (now() - INTERVAL '4 days')::date::text
+	);
 
 INSERT INTO incense_readings (ts, temple, smoke)
-SELECT ts, temple, extract(HOUR FROM ts) -- smoke follows the sun; compresses well
+SELECT ts, temple, extract(HOUR FROM ts) -- smoke follows the sun
 FROM generate_series(now() - INTERVAL '3 days', now(), INTERVAL '1 minute') AS ts,
 	 unnest(ARRAY ['Kyoto', 'Lhasa', 'Fez']) AS temple;
 
-ALTER TABLE incense_readings SET (
-	timescaledb.enable_columnstore = true,
-	timescaledb.segmentby = 'temple'
-	);
+SELECT partman.run_maintenance('public.incense_readings');
 
-SELECT count(compress_chunk(c)) AS chunks_sent_to_columnstore
-FROM show_chunks('incense_readings') c;
+SELECT partition_tablename FROM partman.show_partitions('public.incense_readings');
 
 DO
 $$
 BEGIN
-	IF NOT EXISTS (SELECT 1
-				   FROM timescaledb_information.chunks
-				   WHERE hypertable_name = 'incense_readings'
-					 AND is_compressed) THEN
-		RAISE EXCEPTION 'timescaledb columnstore did not compress any chunk';
+	IF (SELECT count(*) FROM partman.show_partitions('public.incense_readings')) < 8 THEN
+		RAISE EXCEPTION 'pg_partman did not pre-make the daily partitions';
+	END IF;
+	IF EXISTS (SELECT 1 FROM partman.check_default()) THEN
+		RAISE EXCEPTION 'pg_partman: readings fell into the default partition';
 	END IF;
 END
 $$;
@@ -379,13 +468,93 @@ GROUP BY temple
 ORDER BY temple;
 
 --------------------------------------------------------------------------------
+-- HypoPG: Would an Index Help? Ask Without Building One 👻
+-- (btree/BRIN/hash/bloom only: hypothetical GiST is not supported)
+--------------------------------------------------------------------------------
+CREATE TABLE tile_requests
+(
+	id   SERIAL PRIMARY KEY,
+	zoom INTEGER NOT NULL,
+	x    INTEGER NOT NULL,
+	y    INTEGER NOT NULL
+);
+
+INSERT INTO tile_requests (zoom, x, y)
+SELECT i % 20, i, i
+FROM generate_series(1, 100000) AS i;
+ANALYZE tile_requests;
+
+SELECT indexname FROM hypopg_create_index('CREATE INDEX ON tile_requests (x)');
+SELECT index_name, am_name, pg_size_pretty(hypopg_relation_size(indexrelid)) AS would_cost
+FROM hypopg_list_indexes;
+
+DO
+$$
+DECLARE
+	line      text;
+	uses_hypo boolean := false;
+BEGIN
+	FOR line IN EXECUTE 'EXPLAIN SELECT * FROM tile_requests WHERE x = 4242' LOOP
+		RAISE NOTICE '%', line;
+		uses_hypo := uses_hypo OR line LIKE '%<%>btree_tile_requests_x%';
+	END LOOP;
+	IF NOT uses_hypo THEN
+		RAISE EXCEPTION 'hypopg: the planner ignored the hypothetical index';
+	END IF;
+END
+$$;
+
+SELECT hypopg_reset();
+
+--------------------------------------------------------------------------------
+-- pg_repack: Re-shelving the Scrolls in Spatial Order, No Lock Held 📜
+-- (runs the client from this container; PG* env comes from docker-compose)
+--------------------------------------------------------------------------------
+CREATE TABLE scattered_scrolls
+(
+	id      SERIAL PRIMARY KEY,
+	geohash TEXT                  NOT NULL,
+	geom    geometry(Point, 4326) NOT NULL
+);
+
+-- scrambled insert order, so heap order has nothing to do with location
+INSERT INTO scattered_scrolls (geohash, geom)
+SELECT ST_GeoHash(g, 8), g
+FROM (SELECT ST_Point((i * 7919 % 360) - 180, (i * 104729 % 170) - 85, 4326) AS g
+	  FROM generate_series(1, 5000) AS i) s;
+
+CREATE TEMP TABLE repack_witness AS
+SELECT pg_relation_filenode('scattered_scrolls') AS filenode;
+
+\! pg_repack --dbname=test --table=public.scattered_scrolls --order-by=geohash
+
+DO
+$$
+DECLARE
+	out_of_order bigint;
+BEGIN
+	IF pg_relation_filenode('scattered_scrolls') = (SELECT filenode FROM repack_witness) THEN
+		RAISE EXCEPTION 'pg_repack did not rewrite scattered_scrolls';
+	END IF;
+
+	SELECT count(*) INTO out_of_order
+	FROM (SELECT geohash < lag(geohash) OVER (ORDER BY ctid) AS regressed FROM scattered_scrolls) t
+	WHERE regressed;
+	IF out_of_order > 0 THEN
+		RAISE EXCEPTION 'pg_repack: % scrolls are not in geohash order on disk', out_of_order;
+	END IF;
+END
+$$;
+
+--------------------------------------------------------------------------------
 -- Final Diagnostics Check
 --------------------------------------------------------------------------------
 SELECT 'Running Final Version Checks...' AS status_message;
 SELECT version() AS postgres_version_final_check;
 SELECT extname, extversion
 FROM pg_extension
-WHERE extname IN ('postgis', 'postgis_raster', 'postgis_sfcgal', 'vector', 'pgrouting', 'pg_trgm', 'timescaledb');
+WHERE extname IN ('postgis', 'postgis_raster', 'postgis_sfcgal', 'vector', 'pgrouting', 'pg_trgm',
+				  'h3', 'h3_postgis', 'pgtap', 'hypopg', 'pg_repack', 'pg_partman');
 SELECT pgr_version() AS pgr_version_final_check;
 
 --------------------------------------------------------------------------------

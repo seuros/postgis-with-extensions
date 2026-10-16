@@ -1,4 +1,4 @@
-#### PostgreSQL 18 with PostGIS, pgvector, pgRouting, pg_cron and TimescaleDB
+#### PostgreSQL 18 with PostGIS, pgvector, pgRouting, pg_cron, H3, pg_partman, pgTAP, HypoPG and pg_repack
 
 Multi-arch (`linux/amd64`, `linux/arm64`) images built on the official
 `postgres` image, so every [upstream environment variable and init hook](https://hub.docker.com/_/postgres)
@@ -42,19 +42,31 @@ IMAGE_TAG=18 IMAGE_FLAVOR=-alpine docker compose up -d
 
 ## Available extensions
 
-| Extension | Debian (PGDG / Timescale apt) | Alpine (built from source) |
-|-----------|-------------------------------|----------------------------|
+| Extension | Debian (PGDG apt) | Alpine (built from source) |
+|-----------|-------------------|----------------------------|
 | [postgis](https://github.com/postgis/postgis) (+ raster, sfcgal, topology, tiger geocoder) | 3.6.x | 3.6.4 |
 | [pgvector](https://github.com/pgvector/pgvector) | 0.8.x | 0.8.7 |
 | [pgrouting](https://github.com/pgRouting/pgrouting) | 4.0.x | 4.0.2 |
 | [pg_cron](https://github.com/citusdata/pg_cron) | 1.6.x | 1.6.8 |
-| [timescaledb](https://github.com/timescale/timescaledb) (incl. TSL features: columnstore, continuous aggregates) | 2.30.x | 2.30.2 |
+| [h3](https://github.com/postgis/h3-pg) (+ `h3_postgis`) | 4.2.3 | 4.2.3 |
+| [pg_partman](https://github.com/pgpartman/pg_partman) | 5.4.3 | 5.4.3 |
+| [pgtap](https://github.com/theory/pgtap) | 1.3.4 | 1.3.4 |
+| [hypopg](https://github.com/HypoPG/hypopg) | 1.4.2 | 1.4.2 |
+| [pg_repack](https://github.com/reorg/pg_repack) (extension + `pg_repack` client) | 1.5.3 | 1.5.3 |
 
-Debian packages track the latest release in their apt repos at build time;
-Alpine versions are pinned via build args in `Dockerfile.alpine`
-(`POSTGIS_VERSION`, `PGVECTOR_VERSION`, `PGROUTING_VERSION`, `PGCRON_VERSION`,
-`TIMESCALEDB_VERSION`). Pass `--build-arg WITH_PGROUTING=0` to skip the
-pgRouting build on Alpine.
+Debian packages track the latest release in their apt repos at build time,
+except h3, pg_partman, pgTAP, HypoPG and pg_repack: those are pinned on both
+flavours to the versions Amazon RDS for PostgreSQL 18 ships
+(`H3_VERSION`, `PGPARTMAN_VERSION`, `PGTAP_VERSION`, `HYPOPG_VERSION`,
+`PGREPACK_VERSION` build args), so code written against this image runs on RDS.
+The Debian build fails if PGDG stops carrying a pinned version. Other Alpine
+versions are pinned via build args in `Dockerfile.alpine` (`POSTGIS_VERSION`,
+`PGVECTOR_VERSION`, `PGROUTING_VERSION`, `PGCRON_VERSION`). Pass
+`--build-arg WITH_PGROUTING=0` to skip the pgRouting build on Alpine.
+
+TimescaleDB was removed: it isn't available on RDS. Use pg_partman for
+time-partitioned tables. Existing volumes that have `CREATE EXTENSION
+timescaledb` won't load on the new images.
 
 ## Enabling extensions
 
@@ -65,14 +77,31 @@ CREATE EXTENSION postgis;
 CREATE EXTENSION postgis_raster;
 CREATE EXTENSION vector;
 CREATE EXTENSION pgrouting;
-CREATE EXTENSION timescaledb;
+CREATE EXTENSION h3;
+CREATE EXTENSION h3_postgis CASCADE; -- needs postgis + postgis_raster
+CREATE SCHEMA partman;
+CREATE EXTENSION pg_partman SCHEMA partman;
+CREATE EXTENSION pgtap;
+CREATE EXTENSION hypopg;
+CREATE EXTENSION pg_repack; -- then run the pg_repack client, shipped in the image
 CREATE EXTENSION pg_cron; -- in the database named by cron.database_name (default: postgres)
 ```
 
-`timescaledb` and `pg_cron` are preloaded via `shared_preload_libraries` in the
-image's default command. If you override the command, keep
-`-c shared_preload_libraries=timescaledb,pg_cron` (or set it in your
-`postgresql.conf`).
+`pg_cron` is preloaded via `shared_preload_libraries` in the image's default
+command. If you override the command, keep
+`-c shared_preload_libraries=pg_cron` (or set it in your `postgresql.conf`).
+
+pg_partman's background worker is not preloaded. Run its maintenance from
+pg_cron, as on RDS:
+
+```sql
+-- from the cron.database_name database
+SELECT cron.schedule_in_database('partman-maintenance', '@hourly',
+                                 'CALL partman.run_maintenance_proc()', 'mydb');
+```
+
+HypoPG only supports hypothetical btree, BRIN, hash and bloom indexes, not
+GiST/SP-GiST/GIN, so it can't predict the effect of a spatial index.
 
 The containers run as the `postgres` user and default `PGUSER=postgres` for
 client tools.
